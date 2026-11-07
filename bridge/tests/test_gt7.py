@@ -140,3 +140,23 @@ def test_ftms_control_point_messages():
     assert f.parse_control_response(b"\x01\x02") is None
     assert f.parse_weight(b"`;") == pytest.approx(76.0)  # what the user's KICKR reported
     assert f.parse_weight(b"\x00\x00") is None
+
+
+def test_discovery_error_is_reported_and_retried(monkeypatch):
+    import asyncio
+
+    calls = []
+
+    async def failing_discovery(timeout: float = 3.0):
+        calls.append(1)
+        raise OSError(65, "No route to host")
+
+    async def fast_sleep(_s):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(tm, "discover_ps5", failing_discovery)
+    t = tm.Gt7Telemetry(lambda s: None)
+    monkeypatch.setattr(tm.asyncio, "sleep", fast_sleep)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(t.run())
+    assert calls and "Local Network" in t.status and "No route to host" in t.status

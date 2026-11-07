@@ -175,3 +175,49 @@ def test_mix_max_takes_largest_magnitude():
     assert e.step(snap(paddle_l=-0.6, paddle_r=-0.6), 0).l2 == round(0.6 * 255)
     e2 = Engine(profile(axes={"l2": {"combine": [{"source": "paddle_l", "scale": -1}, {"source": "paddle_r", "scale": -1}]}}))
     assert e2.step(snap(paddle_l=-0.6, paddle_r=-0.6), 0).l2 == 255  # default sum, clamped
+
+
+def test_release_ms_drops_fast_while_rise_stays_smooth():
+    e = Engine(profile(axes={"r2": {"source": "power_ftp", "smooth_ms": 400, "release_ms": 0}}))
+    assert e.step(snap(power_ftp=0.0), 0.0).r2 == 0
+    rising = e.step(snap(power_ftp=1.0), 0.1).r2
+    assert 0 < rising < 100  # smoothed on the way up
+    for i in range(30):
+        e.step(snap(power_ftp=1.0), 0.2 + i * 0.1)
+    assert e.step(snap(power_ftp=1.0), 3.5).r2 == 255
+    assert e.step(snap(power_ftp=0.2), 3.6).r2 == round(0.2 * 255)  # immediate on the way down
+
+
+def test_release_defaults_to_smooth_ms():
+    e = Engine(profile(axes={"r2": {"source": "power_ftp", "smooth_ms": 400}}))
+    e.step(snap(power_ftp=1.0), 0.0)
+    assert e.step(snap(power_ftp=0.0), 0.1).r2 > 150  # still smoothed while falling
+
+
+def test_zero_when_cuts_and_resets_smoothing():
+    e = Engine(
+        profile(
+            axes={
+                "r2": {
+                    "source": "power_ftp",
+                    "smooth_ms": 400,
+                    "zero_when": [{"source": "paddle_l", "above": 0.15}, {"source": "paddle_r", "below": -0.15}],
+                }
+            }
+        )
+    )
+    e.step(snap(power_ftp=1.0), 0.0)
+    assert e.step(snap(power_ftp=1.0), 5.0).r2 == 255
+    assert e.step(snap(power_ftp=1.0, paddle_l=0.5), 5.1).r2 == 0
+    assert e.step(snap(power_ftp=1.0, paddle_r=-0.5), 5.2).r2 == 0
+    assert e.step(snap(power_ftp=1.0, paddle_r=0.5), 5.3).r2 > 0  # steering doesn't cut
+    # after the cut the throttle ramps up again from zero instead of jumping back
+    e.step(snap(power_ftp=1.0, paddle_l=0.5), 6.0)
+    assert e.step(snap(power_ftp=1.0), 6.1).r2 < 100
+
+
+def test_zero_when_validation():
+    with pytest.raises(ValueError):
+        AxisBinding.model_validate({"source": "power_ftp", "zero_when": [{"source": "paddle_l"}]})
+    with pytest.raises(ValueError):
+        AxisBinding.model_validate({"source": "power_ftp", "zero_when": [{"source": "nope", "above": 1}]})

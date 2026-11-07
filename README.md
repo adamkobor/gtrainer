@@ -142,7 +142,7 @@ The 1st-gear share and the target cadence are set in the web UI's "GT7 gears & t
 |---|---|
 | Pedal power | Throttle (R2) |
 | Paddles, outer swing | Steer left / right |
-| Paddles, inner swing (either) | Brake (L2, analog) |
+| Paddles, inner swing (either) | Brake (L2, analog); also cuts the throttle |
 | Upper shifters (either side) | Shift up (✕) |
 | Lower shifters (either side) | Shift down (□) |
 | A / Z | ✕ (confirm) / ○ (back) |
@@ -164,7 +164,14 @@ web UI or any editor, and an invalid profile is rejected while the last valid on
 name: GT7
 extends: menu                  # inherit; entries here replace the parent's, null removes one
 axes:                          # l2 r2 left_x left_y right_x right_y
-  r2: {source: power_gear, in: [0, 1], smooth_ms: 400}
+  r2:
+    source: power_gear
+    in: [0, 1]
+    smooth_ms: 400             # smoothing while rising...
+    release_ms: 0              # ...and while falling back toward zero (default: same as smooth_ms)
+    zero_when:                 # force 0 while any condition holds (e.g. braking cuts the throttle)
+      - {source: paddle_l, above: 0.15}
+      - {source: paddle_r, below: -0.15}
   left_x:
     combine:
       - {source: paddle_r, min: 0}             # min/max clip a term: only the positive swing
@@ -204,8 +211,9 @@ layers:                        # override bindings while active
 | chiaki-ng: "Regist search failed" | macOS is blocking local network access. Rebuild with `chiaki/build.sh` (it signs the app), launch it with `open`, and allow it in System Settings → Privacy & Security → Local Network. |
 | Trainer or Ride "not found" | Close Zwift and any other app connected to them (Bluetooth devices usually allow only one or a few connections), and wake the device. |
 | Ride connects but no buttons | Check the firmware with `tools/probe.py ride`; 1.3+ is locked to Zwift. If every button reads as pressed, start the bridge with `--ride-set-bit-pressed`. |
-| Throttle feels laggy | The KICKR reports power about once per second. `smooth_ms` turns the steps into ramps; it can't make the data arrive faster. |
+| Throttle feels laggy | The KICKR reports power about once per second. `smooth_ms` smooths the rise, `release_ms: 0` lets it drop immediately, and `zero_when` gives an instant cut (in the `gt7` profile, braking cuts the throttle). The trainer's own once-per-second reporting can't be made faster. |
 | Resistance doesn't change | Run with `--gt7` and check the web UI's trainer status. "denied" means another app controls the trainer. |
+| GT7: stuck on "searching for PS5" or "can't reach the local network" | macOS blocks LAN access per app. Allow the app you start gtrainer from (Terminal, iTerm, IntelliJ, VS Code, …) in System Settings → Privacy & Security → **Local Network**, then restart that app. |
 | No GT7 telemetry | GT7 must be running. Pass `--ps5 <ip>` if discovery fails, and check that nothing else is bound to UDP port 33740. |
 | Web UI doesn't update | Run `uv sync` (the live feed needs the `websockets` package) and restart the bridge. |
 

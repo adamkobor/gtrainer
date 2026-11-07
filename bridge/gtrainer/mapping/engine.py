@@ -95,9 +95,14 @@ class Engine:
             if binding is None:
                 continue
             key = f"{scope}:{out}"
+            if any(c.holds(snap.value(c.source)) for c in binding.zero_when):
+                self._ema[key] = 0.0
+                values[out] = 0
+                continue
             term_values = [t.value(snap.value(t.source)) for t in binding.terms()]
             raw = max(term_values, key=abs) if binding.mix == "max" else sum(term_values)
-            raw = self._smooth(key, raw, binding.smooth_ms, dt)
+            release_ms = binding.smooth_ms if binding.release_ms is None else binding.release_ms
+            raw = self._smooth(key, raw, binding.smooth_ms, release_ms, dt)
             v = shape_axis(binding, raw)
             if out in TRIGGERS:
                 values[out] = round(_clamp(v, 0.0, 1.0) * 255)
@@ -142,14 +147,17 @@ class Engine:
             return (b.above is None or v > b.above) and (b.below is None or v < b.below)
         return False
 
-    def _smooth(self, key: str, raw: float, smooth_ms: float, dt: float) -> float:
-        if smooth_ms <= 0:
-            return raw
+    def _smooth(self, key: str, raw: float, smooth_ms: float, release_ms: float, dt: float) -> float:
         prev = self._ema.get(key)
         if prev is None:
+            self._ema[key] = raw
+            return raw
+        # falling back toward zero uses the release time constant
+        tau_ms = release_ms if abs(raw) < abs(prev) else smooth_ms
+        if tau_ms <= 0:
             value = raw
         else:
-            alpha = 1.0 - math.exp(-dt / (smooth_ms / 1000.0)) if dt > 0 else 0.0
+            alpha = 1.0 - math.exp(-dt / (tau_ms / 1000.0)) if dt > 0 else 0.0
             value = prev + alpha * (raw - prev)
         self._ema[key] = value
         return value

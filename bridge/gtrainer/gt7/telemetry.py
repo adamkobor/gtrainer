@@ -120,6 +120,12 @@ def parse(plain: bytes) -> Gt7State:
 
 DISCOVERY_MSG = b"SRCH * HTTP/1.1\ndevice-discovery-protocol-version:00030010\n"
 
+LAN_BLOCKED_HINT = (
+    "can't reach the local network ({err}). On macOS, allow Local Network access for the app "
+    "you run gtrainer from (Terminal, iTerm, IntelliJ, ...): System Settings > Privacy & Security > "
+    "Local Network, then restart that app"
+)
+
 
 async def discover_ps5(timeout: float = 3.0) -> str | None:
     """Find a PS5 on the LAN with the Remote Play discovery broadcast."""
@@ -153,6 +159,9 @@ class _Protocol(asyncio.DatagramProtocol):
     def datagram_received(self, data: bytes, addr) -> None:
         self.owner._on_packet(data, addr)
 
+    def error_received(self, exc: Exception) -> None:
+        self.owner._on_send_error(exc)
+
 
 class Gt7Telemetry:
     """Keeps the heartbeat going and feeds parsed states to `on_state`."""
@@ -168,6 +177,10 @@ class Gt7Telemetry:
         self.last_state: Gt7State | None = None
         self.last_at: float | None = None
         self._last_id = -1
+        self._send_error: str | None = None
+
+    def _on_send_error(self, exc: Exception) -> None:
+        self._send_error = LAN_BLOCKED_HINT.format(err=getattr(exc, "strerror", None) or exc)
 
     @property
     def live(self) -> bool:
@@ -200,7 +213,14 @@ class Gt7Telemetry:
         loop = asyncio.get_running_loop()
         while self.host is None:
             self.status = "searching for PS5"
-            self.host = await discover_ps5()
+            try:
+                self.host = await discover_ps5()
+            except OSError as e:  # macOS Local Network privacy shows up as EHOSTUNREACH etc.
+                self.status = LAN_BLOCKED_HINT.format(err=e.strerror or e)
+                log.warning("GT7 telemetry: %s", self.status)
+            else:
+                if self.host is None:
+                    self.status = "no PS5 found on the network yet (is it on? or pass --ps5 <ip>)"
             if self.host is None:
                 await asyncio.sleep(5)
         log.info("GT7 telemetry: PS5 at %s", self.host)
@@ -209,10 +229,16 @@ class Gt7Telemetry:
         )
         try:
             while True:
-                transport.sendto(b"A", (self.host, SEND_PORT))
-                if not self.live:
-                    self.status = "waiting for GT7 (is it running?)"
-                    self._last_id = -1  # GT7 restarts its packet counter
+                self._send_error = None
+                try:
+                    transport.sendto(b"A", (self.host, SEND_PORT))
+                except OSError as e:
+                    self._on_send_error(e)
                 await asyncio.sleep(1.0)
+                if not self.live:
+                    self.status = self._send_error or f"waiting for GT7 at {self.host} (is the game running?)"
+                    self._last_id = -1  # GT7 restarts its packet counter
+                    if self._send_error:
+                        log.warning("GT7 telemetry: %s", self._send_error)
         finally:
             transport.close()

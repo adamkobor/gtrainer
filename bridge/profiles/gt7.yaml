@@ -1,51 +1,63 @@
-# Gran Turismo 7: pedal power is the throttle, the paddles steer, the shifters change gear.
-# Run with --gt7 to read GT7's telemetry: full throttle then needs the current gear's
-# target power (50% FTP in 1st, rising evenly to 100% FTP in the top gear), and the
-# trainer's resistance follows the gear. Without telemetry: 100% FTP = full throttle.
-# Set FTP / 1st-gear share / target cadence in the web UI.
-#
-#   right paddle, outer swing -> steer right        left paddle, outer swing -> steer left
-#   either paddle, inner swing -> analog brake
-#   either upper shifter (SHIFT_UP_L/R) -> shift up (cross)
-#   either lower shifter (SHIFT_DN_L/R) -> shift down (square)   (shift with either hand while steering)
-#   B -> look back (L1)                             Y -> change view (R1)
-#   POWERUP_L -> R3 (nitrous / overtake / DRS)      POWERUP_R -> options
-#   Z -> circle (menu back)
-#   tap ONOFF_R -> triangle, hold ONOFF_R -> touchpad
-#
-# Paddle signs (measured): right paddle outer = +, inner = -; left paddle outer = -, inner = +.
-# Button roles follow GT7's default controller layout; if you remap in GT7, change them here.
 name: GT7
 extends: menu
-description: Power vs the gear's target (GT7 telemetry) -> throttle; paddles outer -> steer, inner -> brake; upper shifters -> shift up, lower shifters -> shift down (either side); B look back, Y change view.
+description: Power vs the gear's target (GT7 telemetry) -> throttle; paddles outer
+  -> steer, inner -> brake; upper shifters -> shift up, lower shifters -> shift down
+  (either side); B look back, Y change view.
 axes:
   r2:
-    # power_gear = power / current gear's target (= power / FTP without telemetry).
-    # Fine-tune with `in` (e.g. [0.1, 0.95]) or `curve: expo`.
     source: power_gear
-    in: [0, 1]
-    smooth_ms: 400         # the KICKR reports power ~1x per second; this turns the steps into ramps
+    in:
+    - 0
+    - 1
+    smooth_ms: 400
+    # falling: follow the trainer immediately when you ease off (rising stays smoothed)
+    release_ms: 0
+    # braking (either paddle inward) cuts the throttle instantly
+    zero_when:
+    - source: paddle_l
+      above: 0.15
+    - source: paddle_r
+      below: -0.15
   left_x:
     combine:
-      - {source: paddle_r, min: 0, scale: 1}    # right paddle, outer swing (+) -> right
-      - {source: paddle_l, max: 0, scale: 1}    # left paddle, outer swing (-) -> left
-    in: [-1, 1]
-    out: [-1, 1]
-    deadzone: 0.06
-    curve: expo
+    - source: paddle_r
+      min: 0
+      scale: 1
+    - source: paddle_l
+      max: 0
+      scale: 1
+    in:
+    - -1
+    - 1
+    out:
+    - -1
+    - 1
+    deadzone: 0.1
+    curve: linear
     gamma: 1.3
-    smooth_ms: 40          # the paddle reports in coarse steps; soften them a little
+    smooth_ms: 40
   l2:
-    mix: max               # brake = whichever input is pressed hardest (no adding up)
+    mix: max
     combine:
-      - {source: paddle_l, min: 0, scale: 1}    # left paddle, inner swing (+)
-      - {source: paddle_r, max: 0, scale: -1}   # right paddle, inner swing (-)
+    - source: paddle_l
+      min: 0
+      scale: 1
+    - source: paddle_r
+      max: 0
+      scale: -1
 buttons:
-  cross: [A, SHIFT_UP_L, SHIFT_UP_R]     # shift up (and confirm in menus)
-  square: [SHIFT_DN_L, SHIFT_DN_R]       # shift down
-  l1: B                    # look back
-  r1: Y                    # change view
-  r3: POWERUP_L            # nitrous / overtake
-  circle: Z                # back in menus
+  cross:
+  - A
+  - SHIFT_UP_L
+  - SHIFT_UP_R
+  square:
+  - SHIFT_DN_L
+  - SHIFT_DN_R
+  l1: B
+  r1: Y
+  r3: POWERUP_L
+  circle: Z
   options: POWERUP_R
-  triangle: {tap: ONOFF_R, ms: 400}   # ONOFF_R's tap was options (menu profile); hold is still touchpad
+  triangle:
+    tap: ONOFF_R
+    ms: 400

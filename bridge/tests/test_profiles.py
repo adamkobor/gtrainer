@@ -128,6 +128,11 @@ def test_gt7_steering_shifting_and_brake(store):
     assert step(paddle_l=0.5, paddle_r=-0.3).l2 == 128  # max, not sum
     s = step(paddle_r=1.0, paddle_l=0.5)  # steer right while braking with the left
     assert s.left_x == 32767 and s.l2 == 128
+    # braking cuts the throttle; steering doesn't
+    assert step(power_gear=1.0).r2 == 255
+    assert step(power_gear=1.0, paddle_l=0.5).r2 == 0
+    assert step(power_gear=1.0, paddle_r=-0.5).r2 == 0
+    assert step(power_gear=1.0, paddle_r=1.0).r2 == 255
     # buttons (GT7 default layout): shift direction depends on the button, not the side
     for up in ("SHIFT_UP_L", "SHIFT_UP_R"):
         assert set(step(buttons={up}).pressed()) == {"cross"}

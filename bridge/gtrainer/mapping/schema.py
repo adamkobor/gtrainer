@@ -54,6 +54,29 @@ class Term(BaseModel):
         return _check_source(v)
 
 
+class Condition(BaseModel):
+    """True while `source` is above and/or below a threshold."""
+
+    model_config = ConfigDict(extra="forbid")
+    source: str
+    above: float | None = None
+    below: float | None = None
+
+    @field_validator("source")
+    @classmethod
+    def _v_source(cls, v: str) -> str:
+        return _check_source(v)
+
+    @model_validator(mode="after")
+    def _threshold(self) -> Condition:
+        if self.above is None and self.below is None:
+            raise ValueError("a condition needs 'above' and/or 'below'")
+        return self
+
+    def holds(self, value: float) -> bool:
+        return (self.above is None or value > self.above) and (self.below is None or value < self.below)
+
+
 class AxisBinding(BaseModel):
     """value = combine terms (sum, or `mix: max` = the term with the largest magnitude)
     -> EMA smoothing -> map `in` range onto `out` range (clamped) -> deadzone and
@@ -70,6 +93,10 @@ class AxisBinding(BaseModel):
     gamma: float = Field(default=2.0, gt=0)
     deadzone: float = Field(default=0.0, ge=0, lt=1)
     smooth_ms: float = Field(default=0.0, ge=0)
+    # smoothing while the value falls back toward zero; None = same as smooth_ms
+    release_ms: float | None = Field(default=None, ge=0)
+    # output is forced to zero (and smoothing reset) while any condition holds
+    zero_when: list[Condition] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -97,9 +124,8 @@ class AxisBinding(BaseModel):
         return self.combine if self.combine is not None else [Term(source=self.source or "")]
 
     def ride_buttons_used(self) -> set[str]:
-        return {
-            t.source[len(BUTTON_SOURCE_PREFIX) :] for t in self.terms() if t.source.startswith(BUTTON_SOURCE_PREFIX)
-        }
+        sources = [t.source for t in self.terms()] + [c.source for c in self.zero_when]
+        return {s[len(BUTTON_SOURCE_PREFIX) :] for s in sources if s.startswith(BUTTON_SOURCE_PREFIX)}
 
 
 _TRIGGER_KINDS = ("button", "any", "combo", "hold", "tap", "toggle", "signal")
