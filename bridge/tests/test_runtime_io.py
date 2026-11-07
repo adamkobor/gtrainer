@@ -164,3 +164,32 @@ def test_web_api(runtime):
     with client.websocket_connect("/ws") as ws:
         msg = ws.receive_json()
         assert msg["profile"] == "mine" and msg["sim"] is True and msg["rider"] == {"ftp_w": 280}
+
+
+def test_live_websocket_over_a_real_uvicorn_server(runtime):
+    """The in-process TestClient doesn't need a WebSocket library; a real server does."""
+    import json
+
+    import uvicorn
+    import websockets
+
+    async def scenario():
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        server = uvicorn.Server(uvicorn.Config(create_app(runtime), host="127.0.0.1", port=port, log_level="error"))
+        task = asyncio.create_task(server.serve())
+        try:
+            for _ in range(50):
+                if server.started:
+                    break
+                await asyncio.sleep(0.05)
+            async with websockets.connect(f"ws://127.0.0.1:{port}/ws") as ws:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), 3))
+            assert msg["profile"] == "gt7" and "signals" in msg and "output" in msg
+        finally:
+            server.should_exit = True
+            await task
+
+    asyncio.run(scenario())
