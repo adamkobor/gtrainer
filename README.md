@@ -38,6 +38,16 @@ controller input travels over your LAN.
 - **Safety:** if the bridge stops, chiaki-ng releases all inputs within 250 ms; on exit
   the trainer is handed back to its default mode.
 
+## Web UI
+
+The bridge serves a local control panel at http://127.0.0.1:8765. It shows:
+- live bike inputs and Ride buttons
+- the current GT7 gear, its target power and the trainer's gradient
+- a preview of the controller state sent to the PS5
+- a profile editor (form or YAML) with "Learn" buttons for picking Ride buttons
+
+<p align="center"><img src="docs/web-ui.png" alt="gtrainer web UI: bike inputs, GT7 gears and trainer panel, PS5 output preview, and profile editor" width="720"></p>
+
 ## Requirements
 
 | | Tested | Should work |
