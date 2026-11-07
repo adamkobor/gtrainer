@@ -76,15 +76,19 @@ async def run(args: argparse.Namespace) -> None:
         rt.set_rider(rt.rider.model_copy(update={"ftp_w": RiderSettings(ftp_w=args.ftp).ftp_w}))
     use_gt7 = args.gt7 or bool(args.ps5)
 
-    tasks: list[asyncio.Task] = [
-        asyncio.create_task(rt.run_engine(), name="engine"),
-        asyncio.create_task(rt.watch_profiles(), name="profiles"),
-    ]
+    tasks: list[asyncio.Task] = []
+
+    def start(name: str, factory) -> None:
+        # supervised: a crash is logged, shown in the web UI and the task restarted
+        tasks.append(asyncio.create_task(rt.supervise(name, factory), name=name))
+
+    start("engine", rt.run_engine)
+    start("profiles", rt.watch_profiles)
     if use_gt7:
         rt.telemetry = Gt7Telemetry(hub.update_gt7, host=args.ps5)
-        tasks.append(asyncio.create_task(rt.telemetry.run(), name="gt7"))
+        start("gt7", rt.telemetry.run)
     if args.sim:
-        tasks.append(asyncio.create_task(rt.run_sim(), name="sim"))
+        start("sim", rt.run_sim)
     else:
         if not args.no_kickr:
             kickr = KickrLink(
@@ -96,7 +100,7 @@ async def run(args: argparse.Namespace) -> None:
             rt.links.append(kickr)
             if kickr.control_enabled:
                 rt.resistance = ResistanceController(hub, kickr, lambda: rt.rider)
-                tasks.append(asyncio.create_task(rt.resistance.run(), name="resistance"))
+                start("resistance", rt.resistance.run)
         if not args.no_ride:
             rt.links.append(
                 RideLink(
@@ -106,7 +110,8 @@ async def run(args: argparse.Namespace) -> None:
                     cleared_means_pressed=not args.ride_set_bit_pressed,
                 )
             )
-        tasks += [asyncio.create_task(link.run(), name=link.kind) for link in rt.links]
+        for link in rt.links:
+            start(link.kind, link.run)
 
     url = f"http://127.0.0.1:{args.web_port}"
     server = uvicorn.Server(

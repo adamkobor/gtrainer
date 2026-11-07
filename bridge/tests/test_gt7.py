@@ -160,3 +160,101 @@ def test_discovery_error_is_reported_and_retried(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(t.run())
     assert calls and "Local Network" in t.status and "No route to host" in t.status
+
+
+# --- trainer control robustness (fake BLE client) ---------------------------------------
+class FakeClient:
+    """Answers FTMS control point writes with scripted result codes (None = no answer,
+    an exception instance = raised by the write)."""
+
+    def __init__(self, link, script):
+        self.link, self.script, self.is_connected, self.writes = link, script, True, []
+
+    async def write_gatt_char(self, _uuid, payload, response=True):
+        self.writes.append(payload[0])
+        outcome = self.script.get(payload[0], f.RESULT_SUCCESS)
+        if isinstance(outcome, list):
+            outcome = outcome.pop(0) if outcome else f.RESULT_SUCCESS
+        if isinstance(outcome, Exception):
+            raise outcome
+        if outcome is not None:
+            self.link._on_control_point(None, bytearray([f.OP_RESPONSE, payload[0], outcome]))
+
+
+def make_kickr(script, monkeypatch):
+    import gtrainer.ble.kickr as kickr_mod
+
+    monkeypatch.setattr(kickr_mod, "RESPONSE_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(kickr_mod, "CONTROL_RETRY_S", 0.0)
+    link = kickr_mod.KickrLink(SignalHub(), control_enabled=True)
+    link._client = FakeClient(link, script)
+    link._cp_supported = True
+    return link
+
+
+def test_denied_control_is_retried(monkeypatch):
+    import asyncio
+
+    link = make_kickr({f.OP_REQUEST_CONTROL: [f.RESULT_CONTROL_NOT_PERMITTED]}, monkeypatch)
+
+    async def scenario():
+        assert not await link.request_control()  # another app holds the trainer
+        assert "denied" in link.control_status and not link.control_ready
+        assert await link.ensure_control()  # it let go: the retry succeeds
+        assert link.control_ready and link.control_epoch == 1
+
+    asyncio.run(scenario())
+
+
+def test_lost_or_failed_simulation_command_keeps_control(monkeypatch):
+    import asyncio
+
+    from bleak.exc import BleakError
+
+    link = make_kickr({f.OP_SET_SIMULATION: [None, BleakError("disconnected"), f.RESULT_SUCCESS]}, monkeypatch)
+
+    async def scenario():
+        assert await link.request_control()
+        assert not await link.set_simulation(2.0, 0.004)  # indication lost
+        assert link.control_ready
+        assert not await link.set_simulation(2.0, 0.004)  # BLE error is not raised
+        assert link.control_ready
+        assert await link.set_simulation(2.0, 0.004)
+        assert link.control_status == "ok"
+
+    asyncio.run(scenario())
+
+
+def test_resistance_loop_survives_errors_and_resends(monkeypatch):
+    import asyncio
+
+    import gtrainer.gt7.resistance as res
+    from gtrainer.settings import RiderSettings
+
+    monkeypatch.setattr(res, "TICK_S", 0.001)
+    link = make_kickr({f.OP_SET_SIMULATION: [None, f.RESULT_SUCCESS]}, monkeypatch)
+    ctl = res.ResistanceController(link.hub, link, lambda: RiderSettings())
+    boom = {"n": 0}
+    real_target = ctl.current_target
+
+    def flaky_target():
+        boom["n"] += 1
+        if boom["n"] == 1:
+            raise ValueError("bad tick")
+        return real_target()
+
+    ctl.current_target = flaky_target
+
+    async def scenario():
+        task = asyncio.create_task(ctl.run())
+        for _ in range(200):
+            await asyncio.sleep(0.001)
+            if ctl.sent_grade is not None:
+                break
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+    assert ctl.sent_grade is not None  # first tick crashed, first send was lost, then it got through
+    assert link._client.writes.count(f.OP_SET_SIMULATION) == 2
+    assert link._client.writes[-1] == f.OP_RESET  # released on exit

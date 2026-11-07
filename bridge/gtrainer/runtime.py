@@ -24,6 +24,7 @@ from .signals import SignalHub, Snapshot
 log = logging.getLogger(__name__)
 
 TICK_S = 0.01  # 100 Hz
+TASK_ERROR_SHOW_S = 60.0
 
 
 @dataclass
@@ -63,9 +64,11 @@ class Runtime:
     # --- profiles ----------------------------------------------------------------
     def activate(self, name: str) -> Profile:
         profile = self.store.load(name)  # raises ProfileError
+        changed = name != self.active_name or profile != self.profile
         self.active_name, self.profile, self.error = name, profile, ""
-        self.engine.set_profile(profile)
-        log.info("profile: %s", name)
+        if changed:
+            self.engine.set_profile(profile)
+            log.info("profile: %s", name)
         return profile
 
     def reload_active(self) -> None:
@@ -75,7 +78,11 @@ class Runtime:
             self.error = f"{self.active_name}: {e}\n(keeping the last valid version)"
             log.warning("profile reload failed: %s", e)
             return
-        self.profile, self.error = profile, ""
+        self.error = ""
+        if profile == self.profile:
+            # Unrelated file or a no-op save: keep toggles, layers and smoothing state.
+            return
+        self.profile = profile
         self.engine.set_profile(profile)
         log.info("profile reloaded: %s", self.active_name)
 
@@ -83,6 +90,27 @@ class Runtime:
         async for _changes in awatch(self.store.dir):
             # Any change can matter (a profile's parent may have changed).
             self.reload_active()
+
+    # --- background tasks -----------------------------------------------------------
+    task_errors: dict = field(default_factory=dict)  # task name -> (monotonic time, message)
+
+    async def supervise(self, name: str, factory, restart_after_s: float = 2.0) -> None:
+        """Run `factory()` and restart it if it crashes, logging the error and showing
+        it in the UI for TASK_ERROR_SHOW_S; a crashed task must never fail silently."""
+        while True:
+            try:
+                await factory()
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.exception("task %s crashed; restarting in %.0f s", name, restart_after_s)
+                self.task_errors[name] = (time.monotonic(), f"{name}: {type(e).__name__}: {e} (restarted)")
+                await asyncio.sleep(restart_after_s)
+
+    def recent_task_errors(self) -> list[str]:
+        now = time.monotonic()
+        return [msg for at, msg in self.task_errors.values() if now - at <= TASK_ERROR_SHOW_S]
 
     # --- engine loop ---------------------------------------------------------------
     async def run_engine(self) -> None:
@@ -151,7 +179,7 @@ class Runtime:
             "profile": self.active_name,
             "rider": self.rider.model_dump(),
             "layers": list(self.engine.active_layers),
-            "error": self.error,
+            "error": "\n".join(m for m in [self.error, *self.recent_task_errors()] if m),
             "sim": self.sim,
             "devices": [link.to_json() for link in self.links],
             "chiaki": {"addr": f"{self.sender.addr[0]}:{self.sender.addr[1]}", "errors": self.sender.errors},

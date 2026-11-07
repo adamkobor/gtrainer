@@ -224,9 +224,20 @@ class Gt7Telemetry:
             if self.host is None:
                 await asyncio.sleep(5)
         log.info("GT7 telemetry: PS5 at %s", self.host)
-        transport, _ = await loop.create_datagram_endpoint(
-            lambda: _Protocol(self), local_addr=("0.0.0.0", RECV_PORT)
-        )
+        while True:
+            try:
+                transport, _ = await loop.create_datagram_endpoint(
+                    lambda: _Protocol(self), local_addr=("0.0.0.0", RECV_PORT)
+                )
+                break
+            except OSError as e:
+                self.status = (
+                    f"can't listen on UDP {RECV_PORT} ({e.strerror or e}); is another gtrainer "
+                    "or gt7_probe running? retrying"
+                )
+                log.warning("GT7 telemetry: %s", self.status)
+                await asyncio.sleep(5)
+        self.status = f"waiting for GT7 at {self.host}"
         try:
             while True:
                 self._send_error = None

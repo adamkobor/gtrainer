@@ -222,9 +222,10 @@ layers:                        # override bindings while active
 | Trainer or Ride "not found" | Close Zwift and any other app connected to them (Bluetooth devices usually allow only one or a few connections), and wake the device. |
 | Ride connects but no buttons | Check the firmware with `tools/probe.py ride`; 1.3+ is locked to Zwift. If every button reads as pressed, start the bridge with `--ride-set-bit-pressed`. |
 | Throttle feels laggy | The KICKR reports power about once per second. `smooth_ms` smooths the rise, `release_ms: 0` lets it drop immediately, and `zero_when` gives an instant cut (in the `gt7` profile, braking cuts the throttle). The trainer's own once-per-second reporting can't be made faster. |
-| Resistance doesn't change | Run with `--gt7` and check the web UI's trainer status. "denied" means another app controls the trainer. |
+| Resistance doesn't change | Run with `--gt7` and check the web UI's trainer status. "denied" means another app controls the trainer: close it, and the bridge requests control again within about 5 s. |
 | GT7: stuck on "searching for PS5" or "can't reach the local network" | macOS blocks LAN access per app. Allow the app you start gtrainer from (Terminal, iTerm, IntelliJ, VS Code, …) in System Settings → Privacy & Security → **Local Network**, then restart that app. |
-| No GT7 telemetry | GT7 must be running. Pass `--ps5 <ip>` if discovery fails, and check that nothing else is bound to UDP port 33740. |
+| No GT7 telemetry | GT7 must be running. Pass `--ps5 <ip>` if discovery fails. "can't listen on UDP 33740" means another gtrainer or `gt7_probe.py` is still running. |
+| Web UI answers "forbidden: non-local origin" | The UI only accepts requests addressed to `127.0.0.1` or `localhost` (this blocks other web pages from controlling the bridge). Open it at http://127.0.0.1:8765. |
 | Web UI doesn't update | Run `uv sync` (the live feed needs the `websockets` package) and restart the bridge. |
 
 ## Safety and limitations

@@ -12,7 +12,7 @@ from gtrainer.mapping.profiles import ProfileStore
 from gtrainer.output.chiaki import PACKET, ChiakiSender, ControllerState, pack, unpack
 from gtrainer.runtime import Runtime
 from gtrainer.signals import SignalHub
-from gtrainer.web.app import create_app
+from gtrainer.web.app import LOCAL_HOSTS, create_app
 
 SHIPPED = Path(__file__).resolve().parent.parent / "profiles"
 
@@ -132,8 +132,13 @@ def test_reload_keeps_last_valid_profile(runtime):
     assert runtime.profile.name == "GT7"
 
 
+def local_client(runtime) -> TestClient:
+    # TestClient always uses ws://testserver for WebSockets, so allow that name too
+    return TestClient(create_app(runtime, allowed_hosts=LOCAL_HOSTS | {"testserver"}), base_url="http://127.0.0.1:8765")
+
+
 def test_web_api(runtime):
-    client = TestClient(create_app(runtime))
+    client = local_client(runtime)
     assert "A" in client.get("/api/meta").json()["ride_buttons"]
     assert client.get("/api/profiles").json() == {"profiles": ["gt7", "menu", "walking"], "active": "gt7"}
     prof = client.get("/api/profiles/gt7").json()
@@ -201,3 +206,55 @@ def test_live_websocket_over_a_real_uvicorn_server(runtime):
             await task
 
     asyncio.run(scenario())
+
+
+def test_web_rejects_foreign_origins_and_hosts(runtime):
+    from starlette.websockets import WebSocketDisconnect
+
+    client = local_client(runtime)
+    same = {"Origin": "http://127.0.0.1:8765"}
+    assert client.post("/api/profiles/menu/activate", headers=same).status_code == 200
+    # another web page (CSRF) or a DNS-rebound hostname must not reach the API
+    evil = client.post("/api/profiles/gt7/activate", headers={"Origin": "https://evil.example"})
+    assert evil.status_code == 403 and runtime.active_name == "menu"
+    assert client.get("/api/meta", headers={"Host": "evil.example:8765"}).status_code == 403
+    assert client.get("/api/meta", headers={"Origin": "null"}).status_code == 403
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws", headers={"Origin": "https://evil.example"}) as ws:
+            ws.receive_json()
+    with client.websocket_connect("/ws", headers=same) as ws:
+        assert ws.receive_json()["profile"] == "menu"
+
+
+def test_create_profile_never_overwrites(runtime):
+    client = local_client(runtime)
+    before = (runtime.store.dir / "walking.yaml").read_text()
+    r = client.post("/api/profiles/walking", json={"yaml": "name: walking\nextends: gt7\n"})
+    assert r.status_code == 409
+    assert (runtime.store.dir / "walking.yaml").read_text() == before
+    assert client.post("/api/profiles/fresh", json={"yaml": "name: Fresh\nextends: menu\n"}).status_code == 200
+    assert "fresh" in runtime.store.names()
+
+
+def test_reload_of_unchanged_profile_keeps_engine_state(runtime):
+    runtime.engine._toggles["base:x"] = True
+    runtime.reload_active()  # e.g. an unrelated file in the profiles dir changed
+    assert runtime.engine._toggles == {"base:x": True}
+    text = (runtime.store.dir / "gt7.yaml").read_text().replace("smooth_ms: 400", "smooth_ms: 300")
+    (runtime.store.dir / "gt7.yaml").write_text(text)
+    runtime.reload_active()  # a real change resets profile state
+    assert runtime.engine._toggles == {}
+
+
+def test_supervise_logs_and_restarts_crashed_task(runtime):
+    calls = []
+
+    async def flaky():
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+
+    asyncio.run(runtime.supervise("flaky", flaky, restart_after_s=0))
+    assert len(calls) == 2
+    assert any("boom" in m for m in runtime.recent_task_errors())
+    assert "boom" in runtime.status_json()["error"]

@@ -87,21 +87,32 @@ class ResistanceController:
             "sent_grade_pct": None if self.sent_grade is None else round(self.sent_grade, 2),
         }
 
+    async def tick(self) -> None:
+        self.target = self.current_target()
+        if not await self.kickr.ensure_control():
+            return
+        fresh_control = self.kickr.control_epoch != self._sent_epoch
+        changed = self.sent_grade is None or abs(self.target.grade_pct - self.sent_grade) >= RESEND_THRESHOLD_PCT
+        if not (fresh_control or changed):
+            return
+        # On failure sent_grade/_sent_epoch stay as they were, so the next tick retries.
+        if await self.kickr.set_simulation(self.target.grade_pct, self.crr):
+            self.sent_grade = self.target.grade_pct
+            self._sent_epoch = self.kickr.control_epoch
+            log.info(
+                "resistance: gear %d (%s) -> %.0f W at target cadence, grade %.2f%%",
+                self.target.gear, self.target.reason, self.target.target_w, self.target.grade_pct,
+            )
+
     async def run(self) -> None:
         try:
             while True:
-                self.target = self.current_target()
-                if self.kickr.control_ready:
-                    fresh_control = self.kickr.control_epoch != self._sent_epoch
-                    changed = self.sent_grade is None or abs(self.target.grade_pct - self.sent_grade) >= RESEND_THRESHOLD_PCT
-                    if fresh_control or changed:
-                        if await self.kickr.set_simulation(self.target.grade_pct, self.crr):
-                            self.sent_grade = self.target.grade_pct
-                            self._sent_epoch = self.kickr.control_epoch
-                            log.info(
-                                "resistance: gear %d (%s) -> %.0f W at target cadence, grade %.2f%%",
-                                self.target.gear, self.target.reason, self.target.target_w, self.target.grade_pct,
-                            )
+                try:
+                    await self.tick()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # never let one bad tick end trainer control for the session
+                    log.exception("resistance tick failed")
                 await asyncio.sleep(TICK_S)
         finally:
             await self.kickr.release()

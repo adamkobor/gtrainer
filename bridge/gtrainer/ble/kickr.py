@@ -35,6 +35,7 @@ from .link import DeviceLink
 log = logging.getLogger(__name__)
 
 RESPONSE_TIMEOUT_S = 3.0
+CONTROL_RETRY_S = 5.0  # re-request control this often while we don't have it
 
 
 class KickrLink(DeviceLink):
@@ -55,6 +56,9 @@ class KickrLink(DeviceLink):
         self.control_epoch = 0  # bumps on every (re)gained control; resend state then
         self.weight_kg: float | None = None
         self._client: BleakClient | None = None
+        self._has_control = False
+        self._cp_supported = False
+        self._control_attempt_at: float | None = None
         self._pending: dict[int, asyncio.Future] = {}
         self._cp_lock = asyncio.Lock()
 
@@ -63,16 +67,23 @@ class KickrLink(DeviceLink):
         return FTMS_SERVICE_UUID in uuids or CPS_SERVICE_UUID in uuids
 
     @property
+    def connected(self) -> bool:
+        return self._client is not None and self._client.is_connected
+
+    @property
     def control_ready(self) -> bool:
-        return self.control_status == "ok" and self._client is not None and self._client.is_connected
+        return self._has_control and self.connected
 
     def to_json(self) -> dict:
-        connected = self._client is not None and self._client.is_connected
-        control = self.control_status if (connected or not self.control_enabled) else "not connected"
+        control = self.control_status if (self.connected or not self.control_enabled) else "not connected"
         return {**super().to_json(), "control": control, "weight_kg": self.weight_kg}
 
     # --- connection -----------------------------------------------------------------
     async def on_connected(self, client: BleakClient) -> None:
+        self._client = None
+        self._has_control = False
+        self._control_attempt_at = None
+        self._cadence = CadenceCalculator()  # crank counters restart / jumped while away
         services = client.services
         if services.get_characteristic(INDOOR_BIKE_DATA_UUID) is not None:
             await client.start_notify(INDOOR_BIKE_DATA_UUID, self._on_indoor_bike_data)
@@ -91,10 +102,12 @@ class KickrLink(DeviceLink):
 
         self._client = client
         if self.control_enabled:
-            if services.get_characteristic(f.FTMS_CONTROL_POINT_UUID) is None:
+            self._cp_supported = services.get_characteristic(f.FTMS_CONTROL_POINT_UUID) is not None
+            if not self._cp_supported:
                 self.control_status = "unsupported (no FTMS control point)"
             else:
                 await client.start_notify(f.FTMS_CONTROL_POINT_UUID, self._on_control_point)
+                self.control_status = "requesting"
                 await self.request_control()
 
     async def run(self) -> None:
@@ -102,42 +115,67 @@ class KickrLink(DeviceLink):
             await super().run()
         finally:
             self._client = None
+            self._has_control = False
 
     # --- control ----------------------------------------------------------------------
     async def request_control(self) -> bool:
+        self._control_attempt_at = time.monotonic()
         result = await self._command(f.build_request_control())
         if result != f.RESULT_SUCCESS:
-            self.control_status = f"denied (code {result}); close other trainer apps"
+            self._has_control = False
+            why = "no response" if result is None else f"code {result}"
+            self.control_status = f"denied ({why}); close other trainer apps, retrying"
             return False
         await self._command(f.build_start())  # optional on most trainers; ignore result
+        self._has_control = True
         self.control_status = "ok"
         self.control_epoch += 1
         log.info("KICKR: control granted")
         return True
 
+    async def ensure_control(self) -> bool:
+        """Re-request control (rate-limited) when connected without it, e.g. after
+        another app held the trainer or the trainer revoked control."""
+        if self.control_ready:
+            return True
+        if not (self.control_enabled and self._cp_supported and self.connected):
+            return False
+        last = self._control_attempt_at
+        if last is not None and time.monotonic() - last < CONTROL_RETRY_S:
+            return False
+        return await self.request_control()
+
     async def set_simulation(self, grade_pct: float, crr: float) -> bool:
-        if self._client is None or not self._client.is_connected:
+        if not self.connected:
             return False
         result = await self._command(f.build_simulation(grade_pct, crr=crr, cw=0.0))
         if result == f.RESULT_CONTROL_NOT_PERMITTED:
+            self._has_control = False
             self.control_status = "lost; re-requesting"
             if await self.request_control():
                 result = await self._command(f.build_simulation(grade_pct, crr=crr, cw=0.0))
-        if result != f.RESULT_SUCCESS:
-            self.control_status = f"simulation rejected (code {result})"
-            return False
-        return True
+        if result == f.RESULT_SUCCESS:
+            if self._has_control:
+                self.control_status = "ok"
+            return True
+        if self._has_control:
+            # Still in control (e.g. one lost indication): the caller retries next tick.
+            why = "no response" if result is None else f"code {result}"
+            self.control_status = f"ok (last command failed: {why})"
+        return False
 
     async def release(self) -> None:
         """Hand the trainer back (FTMS reset -> its default mode)."""
-        if self._client is not None and self._client.is_connected and self.control_status == "ok":
+        if self.connected and self._has_control:
             try:
                 await asyncio.wait_for(self._command(f.build_reset()), 2.0)
                 log.info("KICKR: control released")
             except Exception as e:
                 log.debug("release failed: %s", e)
+            self._has_control = False
 
     async def _command(self, payload: bytes) -> int | None:
+        """Write to the FTMS control point; the result code, or None on timeout/BLE error."""
         client = self._client
         if client is None:
             return None
@@ -148,6 +186,11 @@ class KickrLink(DeviceLink):
                 await client.write_gatt_char(f.FTMS_CONTROL_POINT_UUID, payload, response=True)
                 return await asyncio.wait_for(fut, RESPONSE_TIMEOUT_S)
             except TimeoutError:
+                return None
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # BleakError etc. (e.g. disconnected mid-write)
+                log.debug("FTMS control point write 0x%02x failed: %s", payload[0], e)
                 return None
             finally:
                 self._pending.pop(payload[0], None)

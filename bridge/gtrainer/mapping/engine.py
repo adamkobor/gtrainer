@@ -37,18 +37,23 @@ class Engine:
         self.reset()
 
     def reset(self) -> None:
+        # Physical button state: survives profile changes, so a button held across
+        # a reload isn't seen as a fresh press (which would flip toggles/layers).
         self._prev: frozenset[str] = frozenset()
         self._press_start: dict[str, float] = {}
+        self._last_t: float | None = None
+        self._reset_profile_state()
+
+    def _reset_profile_state(self) -> None:
         self._toggles: dict[str, bool] = {}
         self._pulse_until: dict[str, float] = {}
         self._ema: dict[str, float] = {}
         self._layer_toggled: dict[str, bool] = {}
-        self._last_t: float | None = None
         self.active_layers: list[str] = []
 
     def set_profile(self, profile: Profile) -> None:
         self.profile = profile
-        self.reset()
+        self._reset_profile_state()
 
     def step(self, snap: Snapshot, now: float) -> ControllerState:
         pressed = snap.buttons
@@ -62,9 +67,11 @@ class Engine:
             released_after[b] = now - start
         dt = 0.0 if self._last_t is None else max(now - self._last_t, 0.0)
 
+        profile = self.profile  # read once: a profile swap must not split a tick
+
         # Layers
         active: list[str] = []
-        for name, layer in self.profile.layers.items():
+        for name, layer in profile.layers.items():
             if layer.toggle is not None and layer.toggle in newly:
                 self._layer_toggled[name] = not self._layer_toggled.get(name, False)
             if (layer.hold is not None and layer.hold in pressed) or self._layer_toggled.get(name, False):
@@ -72,11 +79,11 @@ class Engine:
         self.active_layers = active
 
         buttons: dict[str, tuple[str, ButtonBinding | None]] = {
-            out: ("base", b) for out, b in self.profile.buttons.items()
+            out: ("base", b) for out, b in profile.buttons.items()
         }
-        axes: dict[str, tuple[str, AxisBinding | None]] = {out: ("base", a) for out, a in self.profile.axes.items()}
+        axes: dict[str, tuple[str, AxisBinding | None]] = {out: ("base", a) for out, a in profile.axes.items()}
         for name in active:
-            layer = self.profile.layers[name]
+            layer = profile.layers[name]
             buttons.update({out: (name, b) for out, b in layer.buttons.items()})
             axes.update({out: (name, a) for out, a in layer.axes.items()})
 
@@ -91,10 +98,12 @@ class Engine:
 
         # Axes
         values: dict[str, int] = {}
+        evaluated: set[str] = set()
         for out, (scope, binding) in axes.items():
             if binding is None:
                 continue
             key = f"{scope}:{out}"
+            evaluated.add(key)
             if any(c.holds(snap.value(c.source)) for c in binding.zero_when):
                 self._ema[key] = 0.0
                 values[out] = 0
@@ -108,6 +117,11 @@ class Engine:
                 values[out] = round(_clamp(v, 0.0, 1.0) * 255)
             else:
                 values[out] = round(_clamp(v, -1.0, 1.0) * 32767)
+
+        # Smoothing state of bindings not evaluated this tick (e.g. a base axis
+        # overridden by a layer) would be stale when they come back: restart fresh.
+        for key in self._ema.keys() - evaluated:
+            del self._ema[key]
 
         self._prev = pressed
         self._last_t = now

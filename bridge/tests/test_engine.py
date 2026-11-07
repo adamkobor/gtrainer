@@ -221,3 +221,31 @@ def test_zero_when_validation():
         AxisBinding.model_validate({"source": "power_ftp", "zero_when": [{"source": "paddle_l"}]})
     with pytest.raises(ValueError):
         AxisBinding.model_validate({"source": "power_ftp", "zero_when": [{"source": "nope", "above": 1}]})
+
+
+def test_layer_overridden_axis_restarts_smoothing_fresh():
+    # walking-style: D-pad drives right_y with smoothing; the nav layer disables it
+    e = Engine(profile(
+        axes={"right_y": {"combine": [{"source": "btn:UP", "scale": -1}], "in": [-1, 1], "out": [-1, 1], "smooth_ms": 120}},
+        layers={"nav": {"toggle": "POWERUP_L", "axes": {"right_y": None}}},
+    ))
+    t = 0.0
+    for _ in range(100):  # hold UP until the EMA settles at full deflection
+        t += 0.01
+        e.step(snap(["UP"]), t)
+    e.step(snap(["UP", "POWERUP_L"]), t + 0.01)  # nav on
+    e.step(snap(["UP"]), t + 0.02)
+    e.step(snap([]), t + 0.03)  # UP released while the layer hides right_y
+    e.step(snap(["POWERUP_L"]), t + 0.04)  # nav off
+    state = e.step(snap([]), t + 0.05)
+    assert state.right_y == 0  # no ghost camera movement from the stale EMA
+
+
+def test_held_button_across_profile_change_is_not_a_new_press():
+    p = profile(buttons={"l3": {"toggle": "Y"}})
+    e = Engine(p)
+    assert "l3" in pressed(e.step(snap(["Y"]), 0.0))
+    e.set_profile(profile(name="changed", buttons={"l3": {"toggle": "Y"}}))
+    assert "l3" not in pressed(e.step(snap(["Y"]), 0.01))  # still held: toggle must not flip on
+    e.step(snap([]), 0.03)
+    assert "l3" in pressed(e.step(snap(["Y"]), 0.04))  # a real new press toggles

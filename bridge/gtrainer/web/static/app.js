@@ -426,7 +426,7 @@ async function newProfile() {
   const parent = $("#edit-profile").value || "menu";
   const yaml = `name: ${name}\nextends: ${parent}\ndescription: ""\n`;
   try {
-    await api("PUT", `/api/profiles/${name}`, { yaml });
+    await api("POST", `/api/profiles/${name}`, { yaml }); // 409 if it already exists
     await loadProfiles(name);
   } catch (e) {
     alert(e.message);
