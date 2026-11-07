@@ -1,0 +1,11 @@
+# chiaki-ng checkout/build created by chiaki/build.sh
+chiaki/src/
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+# probe captures
+bridge/captures/
+.DS_Store
+bridge/rider.yaml

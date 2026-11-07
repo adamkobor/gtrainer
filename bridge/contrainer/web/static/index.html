@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>contrainer</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>contrainer</h1>
+    <label class="profile-pick">Profile
+      <select id="active-profile"></select>
+    </label>
+    <label class="profile-pick" title="Functional Threshold Power: power_ftp = power / FTP">FTP
+      <input id="ftp" type="number" min="50" max="600" step="1"> W
+    </label>
+    <div id="layers" class="chips"></div>
+    <div id="devices" class="chips right"></div>
+  </header>
+  <div id="error" class="banner hidden"></div>
+  <div id="sim-banner" class="banner info hidden">Simulation mode: the trainer values are synthetic. Click or hold the Ride buttons below (shift-click to latch) and drag the paddle sliders (−1…1, they snap back to center).</div>
+
+  <main>
+    <section class="card">
+      <h2>Bike inputs</h2>
+      <div id="meters"></div>
+      <h3>Ride buttons</h3>
+      <div id="ride-buttons" class="ride-grid"></div>
+    </section>
+
+    <section class="card">
+      <h2>PS5 output</h2>
+      <div class="pad">
+        <div class="trigger"><span>L2</span><div class="bar"><div id="out-l2"></div></div></div>
+        <div class="trigger"><span>R2</span><div class="bar"><div id="out-r2"></div></div></div>
+        <div class="stick"><span>Left stick</span><div class="ring"><div id="out-left" class="dot"></div></div></div>
+        <div class="stick"><span>Right stick</span><div class="ring"><div id="out-right" class="dot"></div></div></div>
+      </div>
+      <div id="out-buttons" class="ps-grid"></div>
+      <p class="muted small" id="chiaki-info"></p>
+    </section>
+
+    <section class="card wide">
+      <div class="editor-head">
+        <h2>Edit profile</h2>
+        <select id="edit-profile"></select>
+        <button id="new-profile" type="button">New…</button>
+        <div class="tabs">
+          <button data-tab="form" class="tab active" type="button">Form</button>
+          <button data-tab="yaml" class="tab" type="button">YAML</button>
+        </div>
+      </div>
+
+      <div id="tab-form">
+        <p class="muted small">Edits this profile's own settings. Grey values are inherited from <code id="extends-name">—</code>.
+          Advanced bindings (hold/tap/toggle/combos, layers) are shown read-only here; edit them in the YAML tab.
+          Saving from the form rewrites the file and drops YAML comments.</p>
+        <h3>Buttons</h3>
+        <table class="grid"><thead><tr><th>PS5</th><th>Binding</th><th></th></tr></thead><tbody id="form-buttons"></tbody></table>
+        <h3>Axes</h3>
+        <table class="grid axes"><thead><tr><th>PS5</th><th>Source</th><th>In range</th><th>Out range</th><th>Curve</th><th>γ</th><th>Deadzone</th><th>Smooth ms</th><th></th></tr></thead><tbody id="form-axes"></tbody></table>
+        <div class="actions"><button id="form-save" class="primary" type="button">Save</button><span id="form-status" class="muted"></span></div>
+      </div>
+
+      <div id="tab-yaml" class="hidden">
+        <textarea id="yaml" spellcheck="false"></textarea>
+        <div class="actions"><button id="yaml-save" class="primary" type="button">Save</button><span id="yaml-status" class="muted"></span></div>
+      </div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

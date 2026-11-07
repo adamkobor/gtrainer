@@ -1,0 +1,275 @@
+diff --git a/gui/CMakeLists.txt b/gui/CMakeLists.txt
+index 7e777e1..3679392 100755
+--- a/gui/CMakeLists.txt
++++ b/gui/CMakeLists.txt
+@@ -7,7 +7,7 @@ if(APPLE)
+ 	enable_language(OBJCXX)
+ endif()
+ 
+-find_package(Qt6 REQUIRED COMPONENTS Core Gui Concurrent Svg Qml Quick Widgets)
++find_package(Qt6 REQUIRED COMPONENTS Core Gui Concurrent Svg Qml Quick Widgets Network)
+ if(Qt6_VERSION VERSION_GREATER_EQUAL "6.10.0")
+ 	find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
+ endif()
+@@ -35,6 +35,8 @@ set(SOURCE_FILES
+ 	res/resources.qrc
+ 	include/controllermanager.h
+ 	src/controllermanager.cpp
++	include/externalinput.h
++	src/externalinput.cpp
+ 	include/psnaccountid.h
+ 	src/psnaccountid.cpp
+ 	include/psntoken.h
+@@ -104,7 +106,7 @@ if(CHIAKI_ENABLE_CLI)
+ 	target_link_libraries(chiaki chiaki-cli-lib)
+ endif()
+ 
+-target_link_libraries(chiaki Qt::Core Qt::Gui Qt::GuiPrivate Qt::Concurrent Qt::Svg Qt::Qml Qt::Quick Qt::Widgets)
++target_link_libraries(chiaki Qt::Core Qt::Gui Qt::GuiPrivate Qt::Concurrent Qt::Svg Qt::Qml Qt::Quick Qt::Widgets Qt::Network)
+ if (${Qt6DBus_FOUND} AND NOT WIN32)
+ 	target_link_libraries(chiaki Qt::DBus)
+ if (NOT APPLE)
+diff --git a/gui/include/externalinput.h b/gui/include/externalinput.h
+new file mode 100644
+index 0000000..2d4f79c
+--- /dev/null
++++ b/gui/include/externalinput.h
+@@ -0,0 +1,60 @@
++// SPDX-License-Identifier: LicenseRef-AGPL-3.0-only-OpenSSL
++
++#ifndef CHIAKI_EXTERNALINPUT_H
++#define CHIAKI_EXTERNALINPUT_H
++
++#include <chiaki/controller.h>
++
++#include <QObject>
++
++class QTimer;
++class QUdpSocket;
++
++/**
++ * Receives a controller state from another local process (e.g. the contrainer
++ * bike-trainer bridge) over UDP on 127.0.0.1 and exposes it as one more input
++ * source, merged by StreamSession like any physical controller.
++ *
++ * Port: CHIAKI_EXTERNAL_INPUT_PORT env var (default 47800, 0 disables).
++ *
++ * Packet (23 bytes, little-endian):
++ *   char[4] magic "CTRN" | u8 version (1) | u32 sequence |
++ *   u32 buttons (ChiakiControllerButton bits) | u8 l2 | u8 r2 |
++ *   i16 left_x | i16 left_y | i16 right_x | i16 right_y
++ *
++ * If no valid packet arrives for TIMEOUT_MS the state falls back to idle, so a
++ * crashed sender can never leave a button or trigger held.
++ */
++class ExternalInput : public QObject
++{
++	Q_OBJECT
++
++	public:
++		static const int PACKET_SIZE = 23;
++		static const quint8 PROTOCOL_VERSION = 1;
++		static const quint16 DEFAULT_PORT = 47800;
++		static const int TIMEOUT_MS = 250;
++
++		explicit ExternalInput(QObject *parent = nullptr);
++
++		ChiakiControllerState GetState() const { return state; }
++		bool IsListening() const { return socket != nullptr; }
++
++	signals:
++		void StateChanged();
++
++	private slots:
++		void ReadPendingDatagrams();
++		void Timeout();
++
++	private:
++		bool Parse(const QByteArray &data);
++
++		QUdpSocket *socket = nullptr;
++		QTimer *timeout_timer = nullptr;
++		ChiakiControllerState state;
++		quint32 last_seq = 0;
++		bool have_seq = false;
++};
++
++#endif // CHIAKI_EXTERNALINPUT_H
+diff --git a/gui/include/streamsession.h b/gui/include/streamsession.h
+index 52439ce..6e21b07 100755
+--- a/gui/include/streamsession.h
++++ b/gui/include/streamsession.h
+@@ -30,6 +30,7 @@
+ #include "exception.h"
+ #include "sessionlog.h"
+ #include "controllermanager.h"
++#include "externalinput.h"
+ #include "settings.h"
+ 
+ #include <QObject>
+@@ -221,6 +222,7 @@ class StreamSession : public QObject
+ 		float PS_TOUCHPAD_MAX_X, PS_TOUCHPAD_MAX_Y;
+ 		ChiakiControllerState keyboard_state;
+ 		ChiakiControllerState touch_state;
++		ExternalInput *external_input = nullptr;
+ 		QMap<int, uint8_t> touch_tracker;
+ 		int8_t mouse_touch_id;
+ 		ChiakiControllerState dpad_touch_state;
+diff --git a/gui/src/externalinput.cpp b/gui/src/externalinput.cpp
+new file mode 100644
+index 0000000..7931678
+--- /dev/null
++++ b/gui/src/externalinput.cpp
+@@ -0,0 +1,115 @@
++// SPDX-License-Identifier: LicenseRef-AGPL-3.0-only-OpenSSL
++
++#include "externalinput.h"
++
++#include <QHostAddress>
++#include <QTimer>
++#include <QUdpSocket>
++#include <QtEndian>
++#include <QDebug>
++
++#include <cstring>
++
++static bool SameInput(const ChiakiControllerState &a, const ChiakiControllerState &b)
++{
++	return a.buttons == b.buttons
++		&& a.l2_state == b.l2_state && a.r2_state == b.r2_state
++		&& a.left_x == b.left_x && a.left_y == b.left_y
++		&& a.right_x == b.right_x && a.right_y == b.right_y;
++}
++
++ExternalInput::ExternalInput(QObject *parent)
++	: QObject(parent)
++{
++	chiaki_controller_state_set_idle(&state);
++
++	timeout_timer = new QTimer(this);
++	timeout_timer->setSingleShot(true);
++	timeout_timer->setInterval(TIMEOUT_MS);
++	connect(timeout_timer, &QTimer::timeout, this, &ExternalInput::Timeout);
++
++	quint16 port = DEFAULT_PORT;
++	const QByteArray env = qgetenv("CHIAKI_EXTERNAL_INPUT_PORT");
++	if(!env.isEmpty())
++	{
++		bool ok = false;
++		const uint value = env.toUInt(&ok);
++		if(!ok || value > 65535)
++		{
++			qWarning() << "External input: invalid CHIAKI_EXTERNAL_INPUT_PORT" << env << "- disabled";
++			return;
++		}
++		port = static_cast<quint16>(value);
++	}
++	if(port == 0)
++	{
++		qInfo() << "External input: disabled";
++		return;
++	}
++
++	auto *udp = new QUdpSocket(this);
++	if(!udp->bind(QHostAddress::LocalHost, port))
++	{
++		qWarning() << "External input: failed to bind 127.0.0.1:" << port << "-" << udp->errorString();
++		delete udp;
++		return;
++	}
++	socket = udp;
++	connect(socket, &QUdpSocket::readyRead, this, &ExternalInput::ReadPendingDatagrams);
++	qInfo() << "External input: listening on 127.0.0.1:" << port;
++}
++
++void ExternalInput::ReadPendingDatagrams()
++{
++	const ChiakiControllerState before = state;
++	while(socket->hasPendingDatagrams())
++	{
++		QByteArray data;
++		data.resize(static_cast<int>(socket->pendingDatagramSize()));
++		if(socket->readDatagram(data.data(), data.size()) < 0)
++			continue;
++		Parse(data);
++	}
++	if(!SameInput(before, state))
++		emit StateChanged();
++}
++
++bool ExternalInput::Parse(const QByteArray &data)
++{
++	if(data.size() != PACKET_SIZE)
++		return false;
++	const auto *p = reinterpret_cast<const uchar *>(data.constData());
++	if(std::memcmp(p, "CTRN", 4) != 0 || p[4] != PROTOCOL_VERSION)
++		return false;
++
++	// Drop stale/reordered packets. have_seq is cleared on timeout, so a
++	// restarted sender (sequence back at 0) is accepted again after TIMEOUT_MS.
++	const quint32 seq = qFromLittleEndian<quint32>(p + 5);
++	if(have_seq && static_cast<qint32>(seq - last_seq) <= 0)
++		return false;
++	have_seq = true;
++	last_seq = seq;
++
++	ChiakiControllerState s;
++	chiaki_controller_state_set_idle(&s);
++	s.buttons = qFromLittleEndian<quint32>(p + 9) & ((1u << CHIAKI_CONTROLLER_BUTTONS_COUNT) - 1);
++	s.l2_state = p[13];
++	s.r2_state = p[14];
++	s.left_x = qFromLittleEndian<qint16>(p + 15);
++	s.left_y = qFromLittleEndian<qint16>(p + 17);
++	s.right_x = qFromLittleEndian<qint16>(p + 19);
++	s.right_y = qFromLittleEndian<qint16>(p + 21);
++	state = s;
++
++	timeout_timer->start();
++	return true;
++}
++
++void ExternalInput::Timeout()
++{
++	have_seq = false;
++	const ChiakiControllerState before = state;
++	chiaki_controller_state_set_idle(&state);
++	if(!SameInput(before, state))
++		emit StateChanged();
++}
+diff --git a/gui/src/streamsession.cpp b/gui/src/streamsession.cpp
+index 44d7a0e..ae7c2e5 100755
+--- a/gui/src/streamsession.cpp
++++ b/gui/src/streamsession.cpp
+@@ -514,6 +514,8 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
+ 
+ 	chiaki_controller_state_set_idle(&keyboard_state);
+ 	chiaki_controller_state_set_idle(&touch_state);
++	external_input = new ExternalInput(this);
++	connect(external_input, &ExternalInput::StateChanged, this, &StreamSession::SendFeedbackState);
+ 	touch_tracker=QMap<int, uint8_t>();
+ 	mouse_touch_id=-1;
+ 	dpad_touch_id =-1;
+@@ -1284,6 +1286,11 @@ void StreamSession::DpadSendFeedbackState()
+ 	chiaki_controller_state_or(&state, &state, &sdeck_state);
+ #endif
+ 	chiaki_controller_state_or(&state, &state, &keyboard_state);
++	if(external_input)
++	{
++		ChiakiControllerState external_state = external_input->GetState();
++		chiaki_controller_state_or(&state, &state, &external_state);
++	}
+ 	chiaki_controller_state_or(&state, &state, &touch_state);
+ 
+ 	if(input_block)
+@@ -1340,6 +1347,11 @@ void StreamSession::SendFeedbackState()
+ 	chiaki_controller_state_or(&state, &state, &sdeck_state);
+ #endif
+ 	chiaki_controller_state_or(&state, &state, &keyboard_state);
++	if(external_input)
++	{
++		ChiakiControllerState external_state = external_input->GetState();
++		chiaki_controller_state_or(&state, &state, &external_state);
++	}
+ 	chiaki_controller_state_or(&state, &state, &touch_state);
+ 
+ 	if(input_block)

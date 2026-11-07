@@ -1,0 +1,66 @@
+# Walking/exploration: pedal (power) to move forward, left paddle strafes, right paddle turns
+# the camera (analog), D-pad also moves the camera.
+# Toggle POWERUP_L to switch the D-pad back to menu navigation.
+#
+# The paddles swing both ways (-1..1); flip a `scale` if a direction feels mirrored.
+name: Walking
+extends: menu
+description: Power (% of FTP) -> walk forward, sprint above 100 rpm, paddles -> strafe / look, D-pad -> camera; POWERUP_L toggles D-pad navigation.
+axes:
+  left_y:
+    # Power, not cadence: on the KICKR cadence takes ~3 s to appear and to drop,
+    # power reacts within ~1 s both ways (it updates about once per second).
+    source: power_ftp
+    in: [0.1, 0.7]         # 10% FTP = start walking .. 70% FTP = full forward
+    out: [0, -1]           # negative y = forward
+    smooth_ms: 400
+  left_x:
+    combine:
+      - {source: paddle_l, scale: 1}
+    in: [-1, 1]
+    out: [-1, 1]
+    deadzone: 0.06
+    smooth_ms: 40
+  right_x:
+    combine:
+      - {source: paddle_r, scale: 1}
+      - {source: btn:LEFT, scale: -1}
+      - {source: btn:RIGHT, scale: 1}
+    in: [-1, 1]
+    out: [-1, 1]
+    deadzone: 0.06
+    curve: expo
+    gamma: 1.5
+    smooth_ms: 80
+  right_y:
+    combine:
+      - {source: btn:UP, scale: -1}
+      - {source: btn:DOWN, scale: 1}
+    in: [-1, 1]
+    out: [-1, 1]
+    smooth_ms: 120
+buttons:
+  dpad_up: null
+  dpad_down: null
+  dpad_left: null
+  dpad_right: null
+  l3: {signal: cadence_rpm, above: 100}
+layers:
+  nav:
+    toggle: POWERUP_L
+    buttons:
+      dpad_up: UP
+      dpad_down: DOWN
+      dpad_left: LEFT
+      dpad_right: RIGHT
+    axes:
+      right_y: null
+      right_x:             # keep paddle look, drop the D-pad part
+        combine:
+          - {source: paddle_r, scale: 1}
+        in: [-1, 1]
+        out: [-1, 1]
+        deadzone: 0.06
+        curve: expo
+        gamma: 1.5
+        smooth_ms: 80

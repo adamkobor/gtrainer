@@ -1,0 +1,25 @@
+# Full PS5 navigation from the Ride buttons. Other profiles extend this one.
+#
+# Ride layout: left hood = D-pad (UP/DOWN/LEFT/RIGHT), right hood = A/B/Y/Z,
+# each side also has SHIFT_UP_*/SHIFT_DN_*, POWERUP_* and ONOFF_* buttons,
+# plus analog paddles (paddle_l / paddle_r, 0..1).
+name: Menu
+description: D-pad + face buttons; tap/hold the on-off buttons for Options, Create, PS and touchpad.
+buttons:
+  dpad_up: UP
+  dpad_down: DOWN
+  dpad_left: LEFT
+  dpad_right: RIGHT
+  cross: A
+  circle: B
+  triangle: Y
+  square: Z
+  l1: SHIFT_DN_L
+  r1: SHIFT_DN_R
+  options: {tap: ONOFF_R, ms: 400}
+  touchpad: {hold: ONOFF_R, ms: 800}
+  create: {tap: ONOFF_L, ms: 400}
+  ps: {hold: ONOFF_L, ms: 800}
+axes:
+  l2: {source: btn:SHIFT_UP_L}
+  r2: {source: btn:SHIFT_UP_R}
