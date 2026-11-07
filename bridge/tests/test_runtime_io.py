@@ -6,13 +6,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from contrainer.decode.fitness import BikeSample
-from contrainer.decode.zwift_ride import KeypadStatus
-from contrainer.mapping.profiles import ProfileStore
-from contrainer.output.chiaki import PACKET, ChiakiSender, ControllerState, pack, unpack
-from contrainer.runtime import Runtime
-from contrainer.signals import SignalHub
-from contrainer.web.app import create_app
+from gtrainer.decode.fitness import BikeSample
+from gtrainer.decode.zwift_ride import KeypadStatus
+from gtrainer.mapping.profiles import ProfileStore
+from gtrainer.output.chiaki import PACKET, ChiakiSender, ControllerState, pack, unpack
+from gtrainer.runtime import Runtime
+from gtrainer.signals import SignalHub
+from gtrainer.web.app import create_app
 
 SHIPPED = Path(__file__).resolve().parent.parent / "profiles"
 
@@ -59,7 +59,7 @@ def test_hub_power_relative_to_ftp():
 
 
 def test_rider_settings_roundtrip_and_validation(tmp_path):
-    from contrainer.settings import RiderSettings, SettingsError, load_rider, save_rider
+    from gtrainer.settings import RiderSettings, SettingsError, load_rider, save_rider
 
     path = tmp_path / "rider.yaml"
     assert load_rider(path).ftp_w == 200  # default when missing
@@ -156,14 +156,22 @@ def test_web_api(runtime):
     assert client.post("/api/sim", json={"buttons": ["A", "bogus"]}).status_code == 200
     assert runtime.hub.snapshot().buttons == frozenset({"A"})
 
-    assert client.get("/api/rider").json() == {"ftp_w": 200}
-    assert client.put("/api/rider", json={"ftp_w": 280}).json() == {"ftp_w": 280}
-    assert runtime.hub.ftp_w == 280 and "280" in (runtime.store.dir / "rider.yaml").read_text()
+    assert client.get("/api/rider").json() == {"ftp_w": 200, "first_gear_ftp": 0.5, "target_cadence_rpm": 90}
+    # partial updates keep the other fields
+    assert client.put("/api/rider", json={"ftp_w": 280}).json()["first_gear_ftp"] == 0.5
+    assert client.put("/api/rider", json={"first_gear_ftp": 0.4}).json() == {
+        "ftp_w": 280, "first_gear_ftp": 0.4, "target_cadence_rpm": 90,
+    }
+    assert runtime.hub.ftp_w == 280 and runtime.hub.first_gear_ftp == 0.4
+    assert "280" in (runtime.store.dir / "rider.yaml").read_text()
     assert client.put("/api/rider", json={"ftp_w": 9999}).status_code == 422
+    assert client.put("/api/rider", json={"bogus": 1}).status_code == 422
+    assert client.post("/api/sim/gear", json={"gear": 3}).json() == {"ok": True, "gear": 3}
+    assert runtime.hub.snapshot().gear == 3
 
     with client.websocket_connect("/ws") as ws:
         msg = ws.receive_json()
-        assert msg["profile"] == "mine" and msg["sim"] is True and msg["rider"] == {"ftp_w": 280}
+        assert msg["profile"] == "mine" and msg["sim"] is True and msg["rider"]["ftp_w"] == 280
 
 
 def test_live_websocket_over_a_real_uvicorn_server(runtime):

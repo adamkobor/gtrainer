@@ -1,5 +1,8 @@
-# Gran Turismo 7: pedal power (relative to your FTP) is the throttle, the paddles steer,
-# the shifters change gear. Set your FTP in the web UI header (or --ftp).
+# Gran Turismo 7: pedal power is the throttle, the paddles steer, the shifters change gear.
+# Run with --gt7 to read GT7's telemetry: full throttle then needs the current gear's
+# target power (50% FTP in 1st, rising evenly to 100% FTP in the top gear), and the
+# trainer's resistance follows the gear. Without telemetry: 100% FTP = full throttle.
+# Set FTP / 1st-gear share / target cadence in the web UI.
 #
 #   right paddle, outer swing -> steer right        left paddle, outer swing -> steer left
 #   either paddle, inner swing -> analog brake
@@ -14,14 +17,12 @@
 # Button roles follow GT7's default controller layout; if you remap in GT7, change them here.
 name: GT7
 extends: menu
-description: Power as % of FTP -> throttle; paddles outer -> steer, inner -> brake; upper shifters -> shift up, lower shifters -> shift down (either side); B look back, Y change view.
+description: Power vs the gear's target (GT7 telemetry) -> throttle; paddles outer -> steer, inner -> brake; upper shifters -> shift up, lower shifters -> shift down (either side); B look back, Y change view.
 axes:
   r2:
-    # Proof of concept: throttle = power / FTP, so 100% FTP = 100% throttle.
-    # Fine-tune with `in` (e.g. [0.15, 0.9] = no throttle while soft-pedalling,
-    # full throttle a bit below FTP) or `curve: expo`. Gear-dependent tuning will
-    # come with GT7 telemetry.
-    source: power_ftp
+    # power_gear = power / current gear's target (= power / FTP without telemetry).
+    # Fine-tune with `in` (e.g. [0.1, 0.95]) or `curve: expo`.
+    source: power_gear
     in: [0, 1]
     smooth_ms: 400         # the KICKR reports power ~1x per second; this turns the steps into ramps
   left_x:

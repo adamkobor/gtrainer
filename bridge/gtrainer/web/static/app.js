@@ -35,6 +35,7 @@ const S = {
 const METERS = [
   { key: "power_w", label: "Power", max: 600, unit: "W" },
   { key: "power_ftp", label: "% of FTP", max: 1.5, unit: "%", pct: true },
+  { key: "power_gear", label: "% of gear", max: 1.2, unit: "%", pct: true },
   { key: "cadence_rpm", label: "Cadence", max: 130, unit: "rpm" },
   { key: "speed_kph", label: "Speed", max: 60, unit: "km/h" },
   { key: "paddle_l", label: "Paddle L", max: 1, unit: "", sim: true, bipolar: true },
@@ -77,6 +78,13 @@ function buildLive() {
     ride.append(key);
   }
 
+  const simGears = $("#sim-gears");
+  for (const g of [null, 1, 2, 3, 4, 5, 6]) {
+    const b = el("button", { type: "button", "data-gear": g ?? "" }, g ?? "none");
+    b.addEventListener("click", () => api("POST", "/api/sim/gear", { gear: g }).catch(() => {}));
+    simGears.append(b);
+  }
+
   const out = $("#out-buttons");
   for (const b of S.meta.ps_buttons) out.append(el("div", { class: "key", id: `pb-${b}` }, b));
 }
@@ -108,6 +116,8 @@ function render(st) {
   if (document.activeElement !== ftp && Number(ftp.value) !== st.rider.ftp_w) ftp.value = st.rider.ftp_w;
   const active = $("#active-profile");
   if (document.activeElement !== active && active.value !== st.profile) active.value = st.profile;
+
+  renderGt7(st);
 
   // meters
   for (const m of METERS) {
@@ -156,6 +166,28 @@ function render(st) {
   place($("#out-left"), o.left_x, o.left_y);
   place($("#out-right"), o.right_x, o.right_y);
   $("#chiaki-info").textContent = `Sending to chiaki-ng at ${st.chiaki.addr}` + (st.chiaki.errors ? ` · ${st.chiaki.errors} send errors` : "");
+}
+
+function renderGt7(st) {
+  const s = st.signals;
+  const gt7 = st.gt7;
+  let status = "off (start with --gt7)";
+  if (gt7) status = gt7.status === "live" ? (s.gt7_driving ? "live · driving" : "live · not driving") : `${gt7.status}${gt7.host ? ` (${gt7.host})` : ""}`;
+  else if (st.sim && st.sim_gear != null) status = "simulated";
+  $("#gt7-status").textContent = status;
+  $("#gt7-gear").textContent = s.gt7_live ? `${s.gear || "R/N"} / ${s.num_gears}` : "–";
+  $("#gt7-target").textContent = `${s.gear_target_w} W (${Math.round((s.gear_target_w / st.rider.ftp_w) * 100)}% FTP)`;
+  const r = st.resistance;
+  $("#gt7-trainer").textContent = !r ? "not controlled"
+    : r.target ? `${r.control === "ok" ? "" : r.control + " · "}grade ${r.target.grade_pct.toFixed(1)}% (${r.target.reason})` : r.control;
+  const fg = $("#first-gear");
+  if (document.activeElement !== fg) fg.value = Math.round(st.rider.first_gear_ftp * 100);
+  const tc = $("#target-cadence");
+  if (document.activeElement !== tc) tc.value = st.rider.target_cadence_rpm;
+  $("#sim-gears").classList.toggle("hidden", !st.sim);
+  document.querySelectorAll("#sim-gears button").forEach((b) => {
+    b.classList.toggle("active", String(st.sim_gear ?? "") === b.dataset.gear);
+  });
 }
 
 function connectWs() {
@@ -417,6 +449,12 @@ async function main() {
     loadEdit(e.target.value);
   });
   $("#new-profile").addEventListener("click", newProfile);
+  $("#first-gear").addEventListener("change", (e) => {
+    api("PUT", "/api/rider", { first_gear_ftp: Number(e.target.value) / 100 }).catch(() => alert("1st gear must be 10–100% of FTP"));
+  });
+  $("#target-cadence").addEventListener("change", (e) => {
+    api("PUT", "/api/rider", { target_cadence_rpm: Number(e.target.value) }).catch(() => alert("Cadence must be 50–130 rpm"));
+  });
   $("#ftp").addEventListener("change", async (e) => {
     try { await api("PUT", "/api/rider", { ftp_w: Number(e.target.value) }); }
     catch (err) { alert("FTP must be between 50 and 600 W"); }

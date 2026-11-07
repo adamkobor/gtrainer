@@ -1,9 +1,9 @@
 import pytest
 
-from contrainer.mapping.engine import TAP_PULSE_S, Engine, shape_axis
-from contrainer.mapping.schema import AxisBinding, Profile
-from contrainer.output.chiaki import BUTTON_BITS
-from contrainer.signals import Snapshot
+from gtrainer.mapping.engine import TAP_PULSE_S, Engine, shape_axis
+from gtrainer.mapping.schema import AxisBinding, Profile
+from gtrainer.output.chiaki import BUTTON_BITS
+from gtrainer.signals import Snapshot
 
 
 def profile(**doc) -> Profile:
@@ -160,7 +160,7 @@ def test_all_button_bits_distinct():
 
 
 def test_term_clipping():
-    from contrainer.mapping.schema import Term
+    from gtrainer.mapping.schema import Term
 
     assert Term(source="paddle_r", min=0).value(-0.7) == 0
     assert Term(source="paddle_r", min=0).value(0.7) == 0.7

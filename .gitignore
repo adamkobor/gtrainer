@@ -9,3 +9,5 @@ __pycache__/
 bridge/captures/
 .DS_Store
 bridge/rider.yaml
+# IDE
+.idea/

@@ -1,5 +1,5 @@
 [project]
-name = "contrainer"
+name = "gtrainer"
 version = "0.1.0"
 description = "Wahoo KICKR + Zwift Ride -> PS5 controller bridge (via patched chiaki-ng Remote Play)"
 requires-python = ">=3.12"
@@ -7,14 +7,15 @@ dependencies = [
     "bleak>=1.0",
     "fastapi>=0.115",
     "uvicorn>=0.30",
-    "websockets>=13",  # uvicorn needs a WebSocket library for the live UI feed (/ws)
+    "websockets>=13",
+    "pycryptodome>=3.20",  # Salsa20 for GT7 telemetry packets  # uvicorn needs a WebSocket library for the live UI feed (/ws)
     "pydantic>=2.8",
     "pyyaml>=6.0",
     "watchfiles>=0.22",
 ]
 
 [project.scripts]
-contrainer = "contrainer.__main__:main"
+gtrainer = "gtrainer.__main__:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "httpx>=0.27"]
@@ -24,7 +25,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["contrainer"]
+packages = ["gtrainer"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

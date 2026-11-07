@@ -13,6 +13,7 @@ from watchfiles import awatch
 
 from .decode.fitness import BikeSample
 from .decode.zwift_ride import RIDE_BUTTONS, KeypadStatus
+from .gt7.telemetry import Gt7State
 from .mapping.engine import Engine
 from .mapping.profiles import ProfileError, ProfileStore
 from .mapping.schema import Profile
@@ -34,6 +35,8 @@ class Runtime:
     links: list = field(default_factory=list)
     rider: RiderSettings = field(default_factory=RiderSettings)
     rider_path: Path | None = None
+    telemetry: object | None = None  # gt7.telemetry.Gt7Telemetry
+    resistance: object | None = None  # gt7.resistance.ResistanceController
     sim: bool = False
     error: str = ""
     last_state: ControllerState = IDLE
@@ -41,6 +44,7 @@ class Runtime:
 
     def __post_init__(self) -> None:
         self.hub.ftp_w = self.rider.ftp_w
+        self.hub.first_gear_ftp = self.rider.first_gear_ftp
         self.profile: Profile = self.store.load(self.active_name)
         self.engine = Engine(self.profile)
 
@@ -48,9 +52,13 @@ class Runtime:
     def set_rider(self, rider: RiderSettings, *, persist: bool = True) -> None:
         self.rider = rider
         self.hub.ftp_w = rider.ftp_w
+        self.hub.first_gear_ftp = rider.first_gear_ftp
         if persist and self.rider_path is not None:
             save_rider(self.rider_path, rider)
-        log.info("FTP: %d W", rider.ftp_w)
+        log.info(
+            "rider: FTP %d W, 1st gear %d%% FTP, target cadence %d rpm",
+            rider.ftp_w, round(rider.first_gear_ftp * 100), rider.target_cadence_rpm,
+        )
 
     # --- profiles ----------------------------------------------------------------
     def activate(self, name: str) -> Profile:
@@ -92,6 +100,21 @@ class Runtime:
     # --- simulation ----------------------------------------------------------------
     sim_buttons: frozenset[str] = frozenset()
     sim_paddles: tuple[float, float] = (0.0, 0.0)
+    sim_gear: int | None = None  # simulated GT7 gear (6-speed car), None = no telemetry
+
+    def set_sim_gear(self, gear: int | None) -> None:
+        self.sim_gear = None if gear is None else max(0, min(gear, 6))
+        self._push_sim_gear()
+
+    def _push_sim_gear(self) -> None:
+        if self.sim_gear is None or self.telemetry is not None:
+            return
+        self.hub.update_gt7(
+            Gt7State(
+                packet_id=0, gear=self.sim_gear, suggested_gear=None, num_gears=6, on_track=True,
+                paused=False, loading=False, speed_kph=0.0, rpm=0.0, throttle=0.0,
+            )
+        )
 
     def set_sim_input(self, buttons: list[str], paddle_l: float = 0.0, paddle_r: float = 0.0) -> None:
         self.sim_buttons = frozenset(b for b in buttons if b in RIDE_BUTTONS)
@@ -118,6 +141,7 @@ class Runtime:
                     speed_kph=30 + 8 * math.sin(t / 3),
                 )
             )
+            self._push_sim_gear()  # keep simulated telemetry fresh
             await asyncio.sleep(0.25)
 
     def status_json(self) -> dict:
@@ -131,4 +155,7 @@ class Runtime:
             "sim": self.sim,
             "devices": [link.to_json() for link in self.links],
             "chiaki": {"addr": f"{self.sender.addr[0]}:{self.sender.addr[1]}", "errors": self.sender.errors},
+            "gt7": self.telemetry.to_json() if self.telemetry is not None else None,
+            "resistance": self.resistance.to_json() if self.resistance is not None else None,
+            "sim_gear": self.sim_gear,
         }

@@ -97,3 +97,10 @@ table.grid th { font-size: 12px; color: var(--muted); font-weight: 600; }
 textarea#yaml { width: 100%; min-height: 420px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; tab-size: 2; }
 .ok-text { color: var(--on); }
 .err-text { color: var(--err); white-space: pre-wrap; }
+
+.gt7-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 12px; }
+@media (max-width: 860px) { .gt7-grid { grid-template-columns: repeat(2, 1fr); } }
+.gt7-grid .big { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.gt7-settings { display: flex; gap: 20px; flex-wrap: wrap; margin: 8px 0; }
+.sim-gears { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.sim-gears button.active { background: var(--accent-soft); border-color: var(--accent); }

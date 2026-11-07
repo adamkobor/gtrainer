@@ -83,7 +83,7 @@ def pack(state: ControllerState, seq: int) -> bytes:
 def unpack(data: bytes) -> tuple[int, ControllerState]:
     magic, version, seq, buttons, l2, r2, lx, ly, rx, ry = PACKET.unpack(data)
     if magic != MAGIC or version != PROTOCOL_VERSION:
-        raise ValueError("not a contrainer packet")
+        raise ValueError("not a gtrainer packet")
     return seq, ControllerState(buttons, l2, r2, lx, ly, rx, ry)
 
 

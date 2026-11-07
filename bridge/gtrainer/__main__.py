@@ -1,8 +1,8 @@
-"""contrainer: KICKR + Zwift Ride -> PS5 controller bridge.
+"""gtrainer: KICKR + Zwift Ride -> PS5 controller bridge.
 
-    uv run contrainer                    # real devices, profile gt7
-    uv run contrainer --sim              # no hardware: synthetic trainer, click Ride buttons in the UI
-    uv run contrainer --profile walking
+    uv run gtrainer                    # real devices, profile gt7
+    uv run gtrainer --sim              # no hardware: synthetic trainer, click Ride buttons in the UI
+    uv run gtrainer --profile walking
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ import uvicorn
 
 from .ble.kickr import KickrLink
 from .ble.ride import RideLink
+from .gt7.resistance import ResistanceController
+from .gt7.telemetry import Gt7Telemetry
 from .mapping.profiles import ProfileError, ProfileStore
 from .output.chiaki import DEFAULT_PORT, ChiakiSender
 from .runtime import Runtime
@@ -30,7 +32,7 @@ DEFAULT_RIDER = Path(__file__).resolve().parent.parent / "rider.yaml"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(prog="contrainer", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(prog="gtrainer", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--profile", default="gt7", help="profile to start with (default: gt7)")
     p.add_argument("--profiles-dir", type=Path, default=DEFAULT_PROFILES)
     p.add_argument("--rider-file", type=Path, default=DEFAULT_RIDER, help="rider settings (FTP), editable in the web UI")
@@ -47,6 +49,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="treat a SET button bit as pressed (only if the probe shows inverted buttons)",
     )
+    p.add_argument(
+        "--gt7",
+        action="store_true",
+        help="read GT7 telemetry: gear-based throttle (power_gear) and trainer resistance per gear",
+    )
+    p.add_argument("--ps5", help="PS5 IP for GT7 telemetry (default: discover on the LAN); implies --gt7")
+    p.add_argument("--no-resistance", action="store_true", help="with --gt7: don't control the trainer")
     p.add_argument("--chiaki-port", type=int, default=DEFAULT_PORT)
     p.add_argument("--web-port", type=int, default=8765)
     p.add_argument("--open", action="store_true", help="open the web UI in the browser")
@@ -64,17 +73,30 @@ async def run(args: argparse.Namespace) -> None:
         rider=rider, rider_path=args.rider_file,
     )
     if args.ftp is not None:
-        rt.set_rider(RiderSettings(ftp_w=args.ftp))
+        rt.set_rider(rt.rider.model_copy(update={"ftp_w": RiderSettings(ftp_w=args.ftp).ftp_w}))
+    use_gt7 = args.gt7 or bool(args.ps5)
 
     tasks: list[asyncio.Task] = [
         asyncio.create_task(rt.run_engine(), name="engine"),
         asyncio.create_task(rt.watch_profiles(), name="profiles"),
     ]
+    if use_gt7:
+        rt.telemetry = Gt7Telemetry(hub.update_gt7, host=args.ps5)
+        tasks.append(asyncio.create_task(rt.telemetry.run(), name="gt7"))
     if args.sim:
         tasks.append(asyncio.create_task(rt.run_sim(), name="sim"))
     else:
         if not args.no_kickr:
-            rt.links.append(KickrLink(hub, name_filter=args.kickr_name, address=args.kickr_address))
+            kickr = KickrLink(
+                hub,
+                name_filter=args.kickr_name,
+                address=args.kickr_address,
+                control_enabled=use_gt7 and not args.no_resistance,
+            )
+            rt.links.append(kickr)
+            if kickr.control_enabled:
+                rt.resistance = ResistanceController(hub, kickr, lambda: rt.rider)
+                tasks.append(asyncio.create_task(rt.resistance.run(), name="resistance"))
         if not args.no_ride:
             rt.links.append(
                 RideLink(
@@ -96,10 +118,14 @@ async def run(args: argparse.Namespace) -> None:
     try:
         await server.serve()  # returns on Ctrl+C
     finally:
-        for t in tasks:
-            t.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await asyncio.gather(*tasks, return_exceptions=True)
+        # Release the trainer first (needs the BLE link still up), then stop the rest.
+        first = [t for t in tasks if t.get_name() == "resistance"]
+        rest = [t for t in tasks if t not in first]
+        for group in (first, rest):
+            for t in group:
+                t.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.gather(*group, return_exceptions=True)
         sender.close()
 
 

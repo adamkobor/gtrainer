@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from contrainer.output.chiaki import BUTTON_BITS, DEFAULT_PORT, IDLE, ChiakiSender, ControllerState  # noqa: E402
+from gtrainer.output.chiaki import BUTTON_BITS, DEFAULT_PORT, IDLE, ChiakiSender, ControllerState  # noqa: E402
 
 HZ = 100
 

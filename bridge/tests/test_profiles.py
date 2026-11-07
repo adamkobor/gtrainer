@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from contrainer.mapping.profiles import ProfileError, ProfileStore, merge_profiles
+from gtrainer.mapping.profiles import ProfileError, ProfileStore, merge_profiles
 
 SHIPPED = Path(__file__).resolve().parent.parent / "profiles"
 
@@ -27,7 +27,7 @@ def test_gt7_inherits_menu_and_overrides(store):
     assert gt7.buttons["cross"].any == ["A", "SHIFT_UP_L", "SHIFT_UP_R"]  # overridden
     assert gt7.buttons["l1"].button == "B"  # overridden: look back
     assert "l3" not in gt7.buttons
-    assert gt7.axes["r2"].source == "power_ftp"  # overridden
+    assert gt7.axes["r2"].source == "power_gear"  # overridden
     assert [t.source for t in gt7.axes["l2"].combine] == ["paddle_l", "paddle_r"]
 
 
@@ -92,21 +92,21 @@ def test_save_doc_roundtrip(store):
     assert store.load("gt7").buttons["dpad_up"].button == "B"  # child sees parent change
 
 
-def test_gt7_throttle_is_percent_of_ftp(store):
-    from contrainer.mapping.engine import Engine
-    from contrainer.signals import Snapshot
+def test_gt7_throttle_is_percent_of_gear_target(store):
+    from gtrainer.mapping.engine import Engine
+    from gtrainer.signals import Snapshot
 
     e = Engine(store.load("gt7"))
     # step far apart in time so the 400 ms smoothing has settled
-    assert e.step(Snapshot(power_ftp=0.5), 0.0).r2 == 128
-    assert e.step(Snapshot(power_ftp=1.0), 10.0).r2 == 255
-    assert e.step(Snapshot(power_ftp=1.3), 20.0).r2 == 255
-    assert e.step(Snapshot(power_ftp=0.0), 30.0).r2 == 0
+    assert e.step(Snapshot(power_gear=0.5), 0.0).r2 == 128
+    assert e.step(Snapshot(power_gear=1.0), 10.0).r2 == 255
+    assert e.step(Snapshot(power_gear=1.3), 20.0).r2 == 255
+    assert e.step(Snapshot(power_gear=0.0), 30.0).r2 == 0
 
 
 def test_gt7_steering_shifting_and_brake(store):
-    from contrainer.mapping.engine import Engine
-    from contrainer.signals import Snapshot
+    from gtrainer.mapping.engine import Engine
+    from gtrainer.signals import Snapshot
 
     e = Engine(store.load("gt7"))
     t = [0.0]

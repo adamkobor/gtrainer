@@ -111,3 +111,59 @@ class CadenceCalculator:
             self._last_change_at = now
         self._last = (revs, event_time)
         return self._cadence
+
+
+# --- FTMS control point (trainer control; only used when GT7 resistance is enabled) ----------
+FTMS_CONTROL_POINT_UUID = "00002ad9-0000-1000-8000-00805f9b34fb"
+USER_WEIGHT_UUID = "00002a98-0000-1000-8000-00805f9b34fb"  # uint16, 0.005 kg
+
+OP_REQUEST_CONTROL = 0x00
+OP_RESET = 0x01
+OP_START_RESUME = 0x07
+OP_SET_SIMULATION = 0x11
+OP_RESPONSE = 0x80
+
+RESULT_SUCCESS = 0x01
+RESULT_NOT_SUPPORTED = 0x02
+RESULT_INVALID_PARAMETER = 0x03
+RESULT_FAILED = 0x04
+RESULT_CONTROL_NOT_PERMITTED = 0x05
+
+
+def build_request_control() -> bytes:
+    return bytes([OP_REQUEST_CONTROL])
+
+
+def build_reset() -> bytes:
+    return bytes([OP_RESET])
+
+
+def build_start() -> bytes:
+    return bytes([OP_START_RESUME])
+
+
+def build_simulation(grade_pct: float, crr: float = 0.004, cw: float = 0.0, wind_ms: float = 0.0) -> bytes:
+    """Set Indoor Bike Simulation Parameters: wind sint16 (0.001 m/s), grade sint16
+    (0.01 %), crr uint8 (0.0001), cw uint8 (0.01 kg/m)."""
+    return struct.pack(
+        "<BhhBB",
+        OP_SET_SIMULATION,
+        round(wind_ms * 1000),
+        round(grade_pct * 100),
+        max(0, min(255, round(crr * 10000))),
+        max(0, min(255, round(cw * 100))),
+    )
+
+
+def parse_control_response(data: bytes) -> tuple[int, int] | None:
+    """(request opcode, result code) from a control point indication, or None."""
+    if len(data) >= 3 and data[0] == OP_RESPONSE:
+        return data[1], data[2]
+    return None
+
+
+def parse_weight(data: bytes) -> float | None:
+    if len(data) < 2:
+        return None
+    kg = struct.unpack_from("<H", data)[0] * 0.005
+    return kg if 20 <= kg <= 250 else None

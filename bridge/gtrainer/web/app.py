@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ..decode.zwift_ride import RIDE_BUTTONS
 from ..mapping.profiles import ProfileError
@@ -36,8 +36,12 @@ class SimBody(BaseModel):
     paddle_r: float = 0.0
 
 
+class SimGearBody(BaseModel):
+    gear: int | None = None
+
+
 def create_app(rt: Runtime) -> FastAPI:
-    app = FastAPI(title="contrainer")
+    app = FastAPI(title="gtrainer")
 
     def bad(e: Exception) -> HTTPException:
         return HTTPException(status_code=400, detail=str(e))
@@ -113,8 +117,13 @@ def create_app(rt: Runtime) -> FastAPI:
         return rt.rider.model_dump()
 
     @app.put("/api/rider")
-    def put_rider(body: RiderSettings) -> dict:  # validated by pydantic (422 if out of range)
-        rt.set_rider(body)
+    def put_rider(body: dict[str, Any]) -> dict:
+        """Partial update: only the given fields change."""
+        try:
+            rider = RiderSettings.model_validate({**rt.rider.model_dump(), **body})
+        except ValidationError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+        rt.set_rider(rider)
         return rt.rider.model_dump()
 
     @app.post("/api/sim")
@@ -123,6 +132,13 @@ def create_app(rt: Runtime) -> FastAPI:
             raise HTTPException(status_code=409, detail="not running in --sim mode")
         rt.set_sim_input(body.buttons, body.paddle_l, body.paddle_r)
         return {"ok": True}
+
+    @app.post("/api/sim/gear")
+    def sim_gear(body: SimGearBody) -> dict:
+        if not rt.sim:
+            raise HTTPException(status_code=409, detail="not running in --sim mode")
+        rt.set_sim_gear(body.gear)
+        return {"ok": True, "gear": rt.sim_gear}
 
     @app.websocket("/ws")
     async def ws(socket: WebSocket) -> None:

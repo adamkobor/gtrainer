@@ -31,7 +31,7 @@ index 7e777e1..3679392 100755
  if (NOT APPLE)
 diff --git a/gui/include/externalinput.h b/gui/include/externalinput.h
 new file mode 100644
-index 0000000..2d4f79c
+index 0000000..0b405c5
 --- /dev/null
 +++ b/gui/include/externalinput.h
 @@ -0,0 +1,60 @@
@@ -48,7 +48,7 @@ index 0000000..2d4f79c
 +class QUdpSocket;
 +
 +/**
-+ * Receives a controller state from another local process (e.g. the contrainer
++ * Receives a controller state from another local process (e.g. the gtrainer
 + * bike-trainer bridge) over UDP on 127.0.0.1 and exposes it as one more input
 + * source, merged by StreamSession like any physical controller.
 + *

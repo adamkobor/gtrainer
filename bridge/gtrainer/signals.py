@@ -8,13 +8,19 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .decode.fitness import BikeSample
+from .gt7.gears import gear_fraction
+from .gt7.telemetry import Gt7State
 from .decode.zwift_ride import RIDE_BUTTONS, KeypadStatus, PADDLE_LEFT, PADDLE_RIGHT
 
 # Analog sources usable in profiles. power_w/cadence_rpm/speed_kph are >= 0;
 # power_ftp = power_w / rider FTP (1.0 = riding at FTP);
+# power_gear = power_w / the current GT7 gear's target (1.0 = full throttle; falls
+#   back to power_ftp without live telemetry);
 # paddle_l/paddle_r are -1..1 (the Ride paddles swing both ways). Ride buttons are also usable as 0/1 sources
 # with the "btn:" prefix, e.g. "btn:LEFT".
-ANALOG_SOURCES: tuple[str, ...] = ("power_w", "power_ftp", "cadence_rpm", "speed_kph", "paddle_l", "paddle_r")
+ANALOG_SOURCES: tuple[str, ...] = (
+    "power_w", "power_ftp", "power_gear", "cadence_rpm", "speed_kph", "paddle_l", "paddle_r",
+)
 BUTTON_SOURCE_PREFIX = "btn:"
 
 
@@ -32,6 +38,7 @@ def all_sources() -> list[str]:
 class Snapshot:
     power_w: float = 0.0
     power_ftp: float = 0.0
+    power_gear: float = 0.0
     cadence_rpm: float = 0.0
     speed_kph: float = 0.0
     paddle_l: float = 0.0
@@ -40,6 +47,12 @@ class Snapshot:
     ride_battery: int | None = None
     kickr_connected: bool = False
     ride_connected: bool = False
+    # GT7 telemetry (gt7_live False = no fresh packets)
+    gt7_live: bool = False
+    gt7_driving: bool = False
+    gear: int = 0
+    num_gears: int = 0
+    gear_target_w: float = 0.0
 
     def value(self, source: str) -> float:
         if source.startswith(BUTTON_SOURCE_PREFIX):
@@ -50,6 +63,7 @@ class Snapshot:
         return {
             "power_w": round(self.power_w, 1),
             "power_ftp": round(self.power_ftp, 3),
+            "power_gear": round(self.power_gear, 3),
             "cadence_rpm": round(self.cadence_rpm, 1),
             "speed_kph": round(self.speed_kph, 2),
             "paddle_l": round(self.paddle_l, 3),
@@ -58,6 +72,11 @@ class Snapshot:
             "ride_battery": self.ride_battery,
             "kickr_connected": self.kickr_connected,
             "ride_connected": self.ride_connected,
+            "gt7_live": self.gt7_live,
+            "gt7_driving": self.gt7_driving,
+            "gear": self.gear,
+            "num_gears": self.num_gears,
+            "gear_target_w": round(self.gear_target_w),
         }
 
 
@@ -76,6 +95,12 @@ class SignalHub:
 
     bike_stale_s: float = 3.0
     ftp_w: float = 200.0
+    first_gear_ftp: float = 0.5
+    gt7_stale_s: float = 1.0
+    # learned from the trainer: virtual speed (km/h) per rpm, for the grade calibration
+    speed_per_rpm: float = 0.373
+    _gt7: Gt7State | None = None
+    _gt7_at: float | None = None
     clock: Callable[[], float] = time.monotonic
     _bike: _BikeState = field(default_factory=_BikeState)
     _keypad: KeypadStatus | None = None
@@ -92,6 +117,18 @@ class SignalHub:
         if sample.speed_kph is not None:
             self._bike.speed_kph = max(sample.speed_kph, 0.0)
         self._bike.updated_at = self.clock()
+        b = self._bike
+        if b.cadence_rpm >= 50 and b.speed_kph >= 10:
+            self.speed_per_rpm += 0.1 * (b.speed_kph / b.cadence_rpm - self.speed_per_rpm)
+
+    def update_gt7(self, state: Gt7State) -> None:
+        self._gt7, self._gt7_at = state, self.clock()
+
+    def gt7_state(self) -> Gt7State | None:
+        """The latest telemetry, or None if it's stale."""
+        if self._gt7 is None or self._gt7_at is None or self.clock() - self._gt7_at > self.gt7_stale_s:
+            return None
+        return self._gt7
 
     def update_ride(self, status: KeypadStatus) -> None:
         self._keypad = status
@@ -113,9 +150,23 @@ class SignalHub:
         bike_fresh = bike.updated_at is not None and now - bike.updated_at <= self.bike_stale_s
         keypad = self._keypad
         power = bike.power_w if bike_fresh else 0.0
+        power_ftp = power / self.ftp_w if self.ftp_w > 0 else 0.0
+        gt7 = self.gt7_state()
+        if gt7 is not None:
+            share = gear_fraction(gt7.gear, gt7.num_gears, self.first_gear_ftp)
+            target = self.ftp_w * share
+            power_gear = power / target if target > 0 else 0.0
+        else:
+            target, power_gear = self.ftp_w, power_ftp
         return Snapshot(
             power_w=power,
-            power_ftp=power / self.ftp_w if self.ftp_w > 0 else 0.0,
+            power_ftp=power_ftp,
+            power_gear=power_gear,
+            gt7_live=gt7 is not None,
+            gt7_driving=bool(gt7 and gt7.driving),
+            gear=gt7.gear if gt7 else 0,
+            num_gears=gt7.num_gears if gt7 else 0,
+            gear_target_w=target,
             cadence_rpm=bike.cadence_rpm if bike_fresh else 0.0,
             speed_kph=bike.speed_kph if bike_fresh else 0.0,
             paddle_l=keypad.paddle(PADDLE_LEFT) if keypad else 0.0,

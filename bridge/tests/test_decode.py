@@ -2,13 +2,13 @@ import struct
 
 import pytest
 
-from contrainer.decode import zwift_ride as zr
-from contrainer.decode.fitness import (
+from gtrainer.decode import zwift_ride as zr
+from gtrainer.decode.fitness import (
     CadenceCalculator,
     parse_cycling_power,
     parse_indoor_bike_data,
 )
-from contrainer.decode.protobuf import encode_varint, zigzag_decode, zigzag_encode
+from gtrainer.decode.protobuf import encode_varint, zigzag_decode, zigzag_encode
 
 
 def keypad_frame(button_map: int | None = zr.ALL_RELEASED, paddles: dict[int, int] | None = None) -> bytes:

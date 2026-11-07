@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds chiaki-ng with the contrainer external-input patch for this Mac (Apple Silicon).
+# Builds chiaki-ng with the gtrainer external-input patch for this Mac (Apple Silicon).
 #
 #   chiaki/build.sh            # clone (if needed), patch, build
 #   chiaki/build.sh --deps     # also install Homebrew build dependencies first

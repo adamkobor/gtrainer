@@ -20,8 +20,8 @@ from bleak import BleakClient, BleakScanner
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from contrainer.decode import fitness  # noqa: E402
-from contrainer.decode import zwift_ride as zr  # noqa: E402
+from gtrainer.decode import fitness  # noqa: E402
+from gtrainer.decode import zwift_ride as zr  # noqa: E402
 
 CAPTURES = Path(__file__).resolve().parent.parent / "captures"
 

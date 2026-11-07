@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>contrainer</title>
+  <title>gtrainer</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <header>
-    <h1>contrainer</h1>
+    <h1>gtrainer</h1>
     <label class="profile-pick">Profile
       <select id="active-profile"></select>
     </label>
@@ -27,6 +27,23 @@
       <div id="meters"></div>
       <h3>Ride buttons</h3>
       <div id="ride-buttons" class="ride-grid"></div>
+    </section>
+
+    <section class="card" id="gt7-card">
+      <h2>GT7 gears &amp; trainer</h2>
+      <div class="gt7-grid">
+        <div><span class="muted small">Telemetry</span><div id="gt7-status">off (start with --gt7)</div></div>
+        <div><span class="muted small">Gear</span><div class="big" id="gt7-gear">–</div></div>
+        <div><span class="muted small">Full throttle at</span><div class="big" id="gt7-target">–</div></div>
+        <div><span class="muted small">Trainer</span><div id="gt7-trainer">–</div></div>
+      </div>
+      <div id="sim-gears" class="sim-gears hidden"><span class="muted small">Simulated gear:</span></div>
+      <div class="gt7-settings">
+        <label>1st gear <input id="first-gear" type="number" min="10" max="100" step="5"> % FTP</label>
+        <label>Full throttle at <input id="target-cadence" type="number" min="50" max="130" step="5"> rpm</label>
+      </div>
+      <p class="muted small">Full throttle needs the gear's target: the 1st-gear share of FTP, rising evenly to 100% FTP in the top gear.
+        The trainer's simulated grade puts that power at the target cadence. Not driving or no telemetry: 1st-gear resistance.</p>
     </section>
 
     <section class="card">
