@@ -4,6 +4,10 @@ Use your **smart bike trainer as a PS5 controller**. Pedal power is the throttle
 Gran Turismo 7, the Zwift Ride handlebar steers, brakes and shifts, and GT7's gears
 set your trainer's resistance.
 
+**In-Action video**
+
+[![Watch the video](https://img.youtube.com/vi/YoEovSpNH2I/hqdefault.jpg)](https://youtu.be/YoEovSpNH2I)
+
 > **Status: proof of concept.** Tested with one setup: Wahoo KICKR CORE (fw 3.5.34),
 > Zwift Ride (hw B.0, fw 1.2.0), PS5, Apple Silicon Mac. Expect rough edges.
 
